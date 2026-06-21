@@ -1,6 +1,6 @@
-"""Queued remux service using Qt signals and QProcess."""
+"""Queued ffmpeg job service using Qt signals and QProcess."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import logging
 
@@ -11,36 +11,38 @@ log = logging.getLogger("clippiti.services.remux_queue")
 
 
 @dataclass
-class RemuxJob:
-    source_path: Path
+class FfmpegJob:
     target_path: Path
     ffmpeg_path: str
-    remove_source_on_success: bool = True
+    arguments: list[str] = field(default_factory=list)
+    source_path: Path | None = None
+    remove_source_on_success: bool = False
     stderr_path: Path | None = None
-    kind: str = "recording"
+    kind: str = "ffmpeg"
+    context: object | None = None
 
 
 @dataclass
-class RemuxJobResult:
-    job: RemuxJob
+class FfmpegJobResult:
+    job: FfmpegJob
     success: bool
     exit_code: int
     error: str | None = None
 
 
-class RemuxQueueService(QObject):
+class FfmpegJobQueueService(QObject):
     job_started = pyqtSignal(object)
     job_finished = pyqtSignal(object)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
-        self._queue: list[RemuxJob] = []
-        self._active_job: RemuxJob | None = None
+        self._queue: list[FfmpegJob] = []
+        self._active_job: FfmpegJob | None = None
         self._active_process: QProcess | None = None
         self._active_error: str | None = None
         self._shutting_down = False
 
-    def enqueue(self, job: RemuxJob) -> Path:
+    def enqueue(self, job: FfmpegJob) -> Path:
         self._queue.append(job)
         if self._active_process is None:
             self._start_next()
@@ -74,17 +76,7 @@ class RemuxQueueService(QObject):
         job = self._queue.pop(0)
         process = QProcess(self)
         process.setProgram(job.ffmpeg_path)
-        process.setArguments([
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-i",
-            str(job.source_path),
-            "-c",
-            "copy",
-            str(job.target_path),
-        ])
+        process.setArguments(job.arguments)
         process.setStandardOutputFile(QProcess.nullDevice())
         if job.stderr_path is not None:
             process.setStandardErrorFile(str(job.stderr_path))
@@ -118,10 +110,10 @@ class RemuxQueueService(QObject):
         if not success and error is None:
             error = f"exit_code={exit_code}"
 
-        if success and job.remove_source_on_success:
+        if success and job.remove_source_on_success and job.source_path is not None:
             job.source_path.unlink(missing_ok=True)
 
-        result = RemuxJobResult(job=job, success=success, exit_code=exit_code, error=error)
+        result = FfmpegJobResult(job=job, success=success, exit_code=exit_code, error=error)
         self.job_finished.emit(result)
 
         process.deleteLater()
@@ -129,3 +121,15 @@ class RemuxQueueService(QObject):
 
         if not self._shutting_down:
             self._start_next()
+
+
+RemuxJob = FfmpegJob
+
+
+@dataclass
+class RemuxJobResult(FfmpegJobResult):
+    job: RemuxJob
+
+
+class RemuxQueueService(FfmpegJobQueueService):
+    pass

@@ -20,6 +20,7 @@ from .model.config import resolve_config_path
 from .model.config import resolve_workdir
 from .model.config import save_config
 from .services.streamlink_args import build_streamlink_command
+from .services.clipper import ClipConfig
 from .services.recording import RecordingConfig
 from .ui.app import run_app
 
@@ -170,6 +171,11 @@ def main(argv: list[str] | None = None) -> int:
         ffmpeg_path=ffmpeg_path,
         auto_remux_to_mp4=bool(config["recording"].get("auto_remux_to_mp4", False)),
     )
+    clip_cfg = ClipConfig(
+        output_dir=Path(str(config["clip"]["dir"])).expanduser(),
+        ffmpeg_path=ffmpeg_path,
+        default_duration=int(config["clip"].get("default_duration", 30)),
+    )
 
     try:
         result = run_app(
@@ -178,6 +184,7 @@ def main(argv: list[str] | None = None) -> int:
             trigger_radius=trigger_radius,
             resize_debounce_ms=resize_debounce_ms,
             window_title=window_title,
+            clip_cfg=clip_cfg,
             recording_cfg=recording_cfg,
             startup_task=startup_pipeline,
             on_startup_ready=handle_runtime_ready,
