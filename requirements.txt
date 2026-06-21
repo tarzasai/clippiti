@@ -1,0 +1,9 @@
+# Runtime dependencies (mirrors pyproject.toml [project].dependencies)
+python-mpv>=1.0.7
+PyQt6>=6.6.0
+PyYAML>=6.0
+streamlink>=6.0
+
+# Development / testing
+pytest>=8.0
+pytest-qt>=4.4
