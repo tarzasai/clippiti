@@ -92,6 +92,19 @@ def _child_process_kwargs() -> dict[str, object]:
     return kwargs
 
 
+def _stderr_log_path(segment_dir: Path, name: str) -> Path | None:
+    if not log.isEnabledFor(logging.DEBUG):
+        return None
+    return segment_dir / name
+
+
+def _stderr_target(stderr_path: Path | None):
+    if stderr_path is None:
+        return subprocess.DEVNULL, None
+    stderr_fp = stderr_path.open("wb")
+    return stderr_fp, stderr_fp
+
+
 def resolve_stream_metadata(url: str, default_args: str, cli_args: str, timeout_s: int = 25) -> StreamMetadata:
     cmd = _metadata_command(url, default_args, cli_args)
     log.debug("running metadata probe with timeout=%ss", max(1, timeout_s))
@@ -159,11 +172,11 @@ def start_single_session_pipeline(
     segment_dir.mkdir(parents=True, exist_ok=True)
     (segment_dir / "owner.pid").write_text(f"{os.getpid()}\n", encoding="utf-8")
     playlist_path = segment_dir / "live.m3u8"
-    streamlink_stderr_path = segment_dir / "streamlink.stderr.log"
-    ffmpeg_stderr_path = segment_dir / "ffmpeg.stderr.log"
+    streamlink_stderr_path = _stderr_log_path(segment_dir, "streamlink.stderr.log")
+    ffmpeg_stderr_path = _stderr_log_path(segment_dir, "ffmpeg.stderr.log")
 
-    streamlink_stderr_fp = streamlink_stderr_path.open("wb")
-    ffmpeg_stderr_fp = ffmpeg_stderr_path.open("wb")
+    streamlink_stderr_target, streamlink_stderr_fp = _stderr_target(streamlink_stderr_path)
+    ffmpeg_stderr_target, ffmpeg_stderr_fp = _stderr_target(ffmpeg_stderr_path)
 
     streamlink_cmd = _pipeline_streamlink_command(url, quality, default_args, cli_args)
     ffmpeg_cmd = [
@@ -205,7 +218,7 @@ def start_single_session_pipeline(
         streamlink_proc = subprocess.Popen(
             streamlink_cmd,
             stdout=subprocess.PIPE,
-            stderr=streamlink_stderr_fp,
+            stderr=streamlink_stderr_target,
             **child_kwargs,
         )
         if streamlink_proc.stdout is None:
@@ -216,14 +229,16 @@ def start_single_session_pipeline(
             ffmpeg_cmd,
             stdin=streamlink_proc.stdout,
             stdout=subprocess.DEVNULL,
-            stderr=ffmpeg_stderr_fp,
+            stderr=ffmpeg_stderr_target,
             **child_kwargs,
         )
         log.debug("ffmpeg process started pid=%s", ffmpeg_proc.pid)
         streamlink_proc.stdout.close()
     finally:
-        streamlink_stderr_fp.close()
-        ffmpeg_stderr_fp.close()
+        if streamlink_stderr_fp is not None:
+            streamlink_stderr_fp.close()
+        if ffmpeg_stderr_fp is not None:
+            ffmpeg_stderr_fp.close()
 
     runtime = SessionRuntime(
         url=url,

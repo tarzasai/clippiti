@@ -20,6 +20,7 @@ from .model.config import resolve_config_path
 from .model.config import resolve_workdir
 from .model.config import save_config
 from .services.streamlink_args import build_streamlink_command
+from .services.recording import RecordingConfig
 from .ui.app import run_app
 
 
@@ -154,6 +155,7 @@ def main(argv: list[str] | None = None) -> int:
             log.debug("streamlink_stderr: %s", runtime.streamlink_stderr_path)
         if runtime.ffmpeg_stderr_path is not None:
             log.debug("ffmpeg_stderr: %s", runtime.ffmpeg_stderr_path)
+        window.set_runtime(runtime)
         window.set_media_source(str(runtime.playlist_path))
 
     def handle_runtime_failure(exc: Exception) -> None:
@@ -162,6 +164,13 @@ def main(argv: list[str] | None = None) -> int:
             return
         log.error("error: failed to start buffer pipeline: %s", exc)
 
+    recording_cfg = RecordingConfig(
+        output_dir=Path(str(config["recording"]["dir"])).expanduser(),
+        filename_format=str(config["recording"].get("filename_format", "{author}_{timestamp}")),
+        ffmpeg_path=ffmpeg_path,
+        auto_remux_to_mp4=bool(config["recording"].get("auto_remux_to_mp4", False)),
+    )
+
     try:
         result = run_app(
             media_source=None,
@@ -169,6 +178,7 @@ def main(argv: list[str] | None = None) -> int:
             trigger_radius=trigger_radius,
             resize_debounce_ms=resize_debounce_ms,
             window_title=window_title,
+            recording_cfg=recording_cfg,
             startup_task=startup_pipeline,
             on_startup_ready=handle_runtime_ready,
             on_startup_failed=handle_runtime_failure,

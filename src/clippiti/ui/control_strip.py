@@ -1,16 +1,8 @@
 """Floating control strip widget for player controls."""
 
-from datetime import datetime
-from pathlib import Path
-from typing import TYPE_CHECKING
-from collections.abc import Callable
-
 from PyQt6.QtCore import QEasingCurve, QEvent, QPoint, QPropertyAnimation, QRect, QSize, QTimer, Qt
 from PyQt6.QtGui import QIcon
-from PyQt6.QtWidgets import QApplication, QFrame, QHBoxLayout, QToolBar, QWidget
-
-if TYPE_CHECKING:
-    from .video_surface import VideoSurface
+from PyQt6.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QToolBar, QWidget
 
 
 class ControlStrip(QFrame):
@@ -18,9 +10,7 @@ class ControlStrip(QFrame):
     ICON_SIZE = 28
     MARGIN = 12
     ANIM_MS = 180
-    HIDDEN = 5
     TOTAL = 6
-    VISIBLE = TOTAL - HIDDEN
     TRIGGER_PAD = 12
     COLLAPSE_DELAY_MS = 150
 
@@ -38,16 +28,59 @@ class ControlStrip(QFrame):
     def __init__(
         self,
         parent: QWidget,
-        video: "VideoSurface",
         trigger_radius: int,
-        on_osd_message: Callable[[str, str | None, bool], None] | None = None,
     ) -> None:
         super().__init__(parent)
-        self._video = video
         self._trigger_radius = max(50, trigger_radius)
-        self._on_osd_message = on_osd_message
         self._state_idx = 0
         self._hovering = False
+        self._volume = 70
+        self._muted = False
+        self._pinned = False
+        self._recording_active = False
+        self._record_pulse_effect: QGraphicsOpacityEffect | None = None
+        self._record_pulse_anim: QPropertyAnimation | None = None
+
+        self._toolbar = QToolBar(self)
+        self._toolbar.setIconSize(QSize(self.ICON_SIZE, self.ICON_SIZE))
+        self._toolbar.setMovable(False)
+        self._toolbar.setContentsMargins(0, 0, 0, 0)
+
+        self.mute_action = self._toolbar.addAction(
+            QIcon.fromTheme("audio-volume-muted-blocking-symbolic"),
+            "Mute / Unmute"
+        )
+        self.record_action = self._toolbar.addAction(
+            QIcon.fromTheme("media-record-symbolic"),
+            "Record"
+        )
+        self.clip_action = self._toolbar.addAction(
+            QIcon.fromTheme("edit-cut-symbolic"),
+            "Clip"
+        )
+        self.snapshot_action = self._toolbar.addAction(
+            QIcon.fromTheme("screenshot-app-symbolic"),
+            "Snapshot"
+        )
+        self.move_action = self._toolbar.addAction(
+            QIcon.fromTheme("object-move-symbolic"),
+            "Move panel (Ctrl+Click: reverse)"
+        )
+        self.settings_action = self._toolbar.addAction(
+            QIcon.fromTheme("settings-app-symbolic"),
+            "Settings"
+        )
+
+        # This list is only used to control the order of buttons in the toolbar
+        self._actions = [
+            self.mute_action,
+            self.record_action,
+            self.clip_action,
+            self.snapshot_action,
+            self.move_action,
+            self.settings_action,
+        ]
+
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setAutoFillBackground(True)
         self.setContentsMargins(0, 0, 0, 0)
@@ -61,14 +94,14 @@ class ControlStrip(QFrame):
         self._collapse_timer.setInterval(self.COLLAPSE_DELAY_MS)
         self._collapse_timer.timeout.connect(lambda: self._set_hovering(False))
 
-        parent.installEventFilter(self)
-        parent.setMouseTracking(True)
-        self.setMouseTracking(True)
+        for action in self._toolbar.actions():
+            widget = self._toolbar.widgetForAction(action)
+            if widget:
+                widget.setFixedSize(self.BTN_SIZE, self.BTN_SIZE)
+                set_auto_raise = getattr(widget, "setAutoRaise", None)
+                if callable(set_auto_raise):
+                    set_auto_raise(False)
 
-        self._toolbar = QToolBar(self)
-        self._toolbar.setIconSize(QSize(self.ICON_SIZE, self.ICON_SIZE))
-        self._toolbar.setMovable(False)
-        self._toolbar.setContentsMargins(0, 0, 0, 0)
         toolbar_layout = self._toolbar.layout()
         if toolbar_layout is not None:
             toolbar_layout.setContentsMargins(0, 0, 0, 0)
@@ -79,39 +112,12 @@ class ControlStrip(QFrame):
         layout.setSpacing(0)
         layout.addWidget(self._toolbar)
 
-        specs = [
-            ("audio-volume-muted-blocking-symbolic", "Mute / Unmute", self._do_mute),
-            ("screenshot-app-symbolic", "Snapshot", self._do_snapshot),
-            ("edit-cut-symbolic", "Clip", None),
-            ("media-record-symbolic", "Record", None),
-            ("object-move-symbolic", "Move panel (Ctrl+Click: reverse)", self._do_move),
-            ("settings-app-symbolic", "Settings", None),
-        ]
-
-        self._mute_action = None
-        self._actions = []
-        self._volume = 70
-        self._muted = False
-        self._pinned = False
-
-        for idx, (icon_name, tip, slot) in enumerate(specs):
-            action = self._toolbar.addAction(QIcon.fromTheme(icon_name), tip)
-            self._actions.append(action)
-            if idx == 0:
-                self._mute_action = action
-            if slot:
-                action.triggered.connect(slot)
-
-        for action in self._toolbar.actions():
-            widget = self._toolbar.widgetForAction(action)
-            if widget:
-                widget.setFixedSize(self.BTN_SIZE, self.BTN_SIZE)
-                set_auto_raise = getattr(widget, "setAutoRaise", None)
-                if callable(set_auto_raise):
-                    set_auto_raise(False)
-
         self._place_buttons()
-        self._update_mute_icon()
+        self._update_audio_icon()
+
+        parent.installEventFilter(self)
+        parent.setMouseTracking(True)
+        self.setMouseTracking(True)
 
     def _place_buttons(self) -> None:
         edge = self.STATES[self._state_idx][0]
@@ -149,8 +155,9 @@ class ControlStrip(QFrame):
             return QPoint(0, 0)
         pw, ph = p.width(), p.height()
         edge, side = self.STATES[self._state_idx]
-        M, B, V = self.MARGIN, self.BTN_SIZE, self.VISIBLE
-        H = self.HIDDEN
+        M, B = self.MARGIN, self.BTN_SIZE
+        V = self._collapsed_visible_buttons()
+        H = self.TOTAL - V
 
         if edge == "right":
             return QPoint(pw - V * B, M if side == "top" else ph - B - M)
@@ -159,6 +166,11 @@ class ControlStrip(QFrame):
         if edge == "top":
             return QPoint(pw - B - M if side == "right" else M, -H * B)
         return QPoint(pw - B - M if side == "right" else M, ph - V * B)
+
+    def _collapsed_visible_buttons(self) -> int:
+        if self._pinned:
+            return self.TOTAL
+        return 2 if self._recording_active else 1
 
     def _expanded_pos(self) -> QPoint:
         p = self.parentWidget()
@@ -251,12 +263,9 @@ class ControlStrip(QFrame):
                     self._schedule_collapse()
         return super().eventFilter(obj, event)
 
-    def _update_mute_icon(self) -> None:
-        if self._mute_action is None:
-            return
-
+    def _update_audio_icon(self) -> None:
         if self._muted:
-            icon_name = "audio-volume-muted-symbolic"
+            icon_name = "audio-volume-muted-blocking-symbolic"
             label = "MUTE"
         elif self._volume <= 0:
             icon_name = "audio-volume-muted-symbolic"
@@ -271,80 +280,13 @@ class ControlStrip(QFrame):
             icon_name = "audio-volume-high-symbolic"
             label = "HIGH"
 
-        self._mute_action.setIcon(QIcon.fromTheme(icon_name))
-        self._mute_action.setText(label)
+        self.mute_action.setIcon(QIcon.fromTheme(icon_name))
+        self.mute_action.setToolTip(label)
 
-    def _do_mute(self) -> None:
-        self._muted = not self._muted
-        if self._video.player is not None:
-            self._video.player.mute = self._muted
-        self._update_mute_icon()
-        self.sync_player_state()
-        self._show_volume_osd()
-
-    def _apply_volume(self, volume: int) -> bool:
-        new_volume = max(0, min(100, volume))
-        if new_volume == self._volume:
-            return False
-        self._volume = new_volume
-        if self._volume > 0 and self._muted:
-            self._muted = False
-        self.sync_player_state()
-        self._update_mute_icon()
-        self._show_volume_osd()
-        return True
-
-    def sync_player_state(self) -> None:
-        if self._video.player is None:
-            return
-        self._video.player.volume = self._volume
-        self._video.player.mute = self._muted
-
-    def _show_volume_osd(self) -> None:
-        if self._on_osd_message is None:
-            return
-        self._on_osd_message(self.volume_osd_title(), self.volume_osd_detail(), False)
-
-    def volume_osd_title(self) -> str:
-        if self._muted or self._volume <= 0:
-            return "Muted"
-        return f"Volume {self._volume}%"
-
-    def volume_osd_detail(self) -> str | None:
-        if self._muted or self._volume <= 0:
-            return None
-        blocks = max(1, min(10, round(self._volume / 10)))
-        return "|" * blocks
-
-    def adjust_volume(self, delta: int) -> bool:
-        return self._apply_volume(self._volume + delta)
-
-    def handle_volume_key(self, key: int) -> bool:
-        if key in (Qt.Key.Key_Minus, Qt.Key.Key_PageDown):
-            return self.adjust_volume(-5)
-        if key in (Qt.Key.Key_Plus, Qt.Key.Key_Equal, Qt.Key.Key_PageUp):
-            return self.adjust_volume(5)
-        return False
-
-    def wheelEvent(self, event) -> None:  # noqa: N802
-        if event.angleDelta().y() > 0 and self.adjust_volume(5):
-            event.accept()
-            return
-        if event.angleDelta().y() < 0 and self.adjust_volume(-5):
-            event.accept()
-            return
-        super().wheelEvent(event)
-
-    def keyPressEvent(self, event) -> None:  # noqa: N802
-        if self.handle_volume_key(event.key()):
-            event.accept()
-            return
-        super().keyPressEvent(event)
-
-    def _do_move(self) -> None:
-        mods = QApplication.keyboardModifiers()
-        step = -1 if mods & Qt.KeyboardModifier.ControlModifier else 1
-        self.move_position(step)
+    def set_audio_ui_state(self, volume: int, muted: bool) -> None:
+        self._volume = max(0, min(100, int(volume)))
+        self._muted = bool(muted)
+        self._update_audio_icon()
 
     def move_position(self, step: int = 1) -> None:
         self._anim.stop()
@@ -365,24 +307,64 @@ class ControlStrip(QFrame):
                 self._animate_to(self._expanded_pos())
         return self._pinned
 
-    def trigger_snapshot(self) -> None:
-        self._do_snapshot()
-
-    def trigger_mute(self) -> None:
-        self._do_mute()
-
-    def _do_snapshot(self) -> None:
-        if self._video.render_ctx is None:
+    def set_recording(self, active: bool) -> None:
+        self._recording_active = bool(active)
+        action = self.record_action
+        if action is None:
             return
-        out = Path.home() / "Pictures" / "Clippiti" / "snapshots"
-        out.mkdir(parents=True, exist_ok=True)
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        target = out / f"snapshot_{ts}.png"
+        if active:
+            action.setIcon(QIcon.fromTheme("media-playback-stop-symbolic"))
+            action.setText("Stop Recording")
+        else:
+            action.setIcon(QIcon.fromTheme("media-record-symbolic"))
+            action.setText("Record")
 
-        image = self._video.grabFramebuffer()
-        if not image.isNull():
-            image.save(str(target), "PNG")
+        self._set_record_pulse(active)
+
+        if self._pinned:
+            self.move(self._expanded_pos())
+        elif self._hovering:
+            self.move(self._expanded_pos())
+        else:
+            self._animate_to(self._collapsed_pos())
+
+    def _record_button_widget(self) -> QWidget | None:
+        if self.record_action is None:
+            return None
+        return self._toolbar.widgetForAction(self.record_action)
+
+    def _set_record_pulse(self, active: bool) -> None:
+        button = self._record_button_widget()
+        if button is None:
+            return
+
+        if self._record_pulse_effect is None:
+            self._record_pulse_effect = QGraphicsOpacityEffect(button)
+            self._record_pulse_effect.setOpacity(1.0)
+            button.setGraphicsEffect(self._record_pulse_effect)
+        else:
+            button.setGraphicsEffect(self._record_pulse_effect)
+
+        if self._record_pulse_anim is None:
+            self._record_pulse_anim = QPropertyAnimation(self._record_pulse_effect, b"opacity", self)
+            self._record_pulse_anim.setDuration(2000)
+            self._record_pulse_anim.setLoopCount(-1)
+            self._record_pulse_anim.setEasingCurve(QEasingCurve.Type.InOutSine)
+            self._record_pulse_anim.setKeyValueAt(0.0, 1.0)
+            self._record_pulse_anim.setKeyValueAt(0.4, 0.4)
+            self._record_pulse_anim.setKeyValueAt(1.0, 1.0)
+
+        if active:
+            if self._record_pulse_anim.state() != QPropertyAnimation.State.Running:
+                self._record_pulse_anim.start()
+        else:
+            self._record_pulse_anim.stop()
+            self._record_pulse_effect.setOpacity(1.0)
 
     def shutdown(self) -> None:
+        if self._record_pulse_anim is not None:
+            self._record_pulse_anim.stop()
+        if self._record_pulse_effect is not None:
+            self._record_pulse_effect.setOpacity(1.0)
         self._anim.stop()
         self._collapse_timer.stop()

@@ -2,6 +2,8 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 import sys
 import logging
 
@@ -12,6 +14,8 @@ from PyQt6.QtWidgets import QApplication, QMainWindow
 from .control_strip import ControlStrip
 from .osd import OsdOverlay
 from .video_surface import VideoSurface
+from ..services.recording import AsyncRecordingService, RecordingConfig
+from ..services.remux_queue import RemuxJob, RemuxJobResult, RemuxQueueService
 
 log = logging.getLogger("clippiti")
 
@@ -59,9 +63,19 @@ class MainWindow(QMainWindow):
         mpv_options: dict[str, object],
         trigger_radius: int,
         resize_debounce_ms: int,
+        recording_cfg: RecordingConfig | None = None,
     ) -> None:
         super().__init__()
         self._shutting_down = False
+        self._runtime = None
+        self._recording = AsyncRecordingService(self)
+        self._recording.stop_finished.connect(self._handle_recording_stopped)
+        self._recording.stop_failed.connect(self._handle_recording_stop_failed)
+        self._remux_service = RemuxQueueService(self)
+        self._remux_service.job_finished.connect(self._on_remux_job_finished)
+        self._recording_cfg = recording_cfg
+        self._stop_in_progress = False
+        self._stop_cfg: RecordingConfig | None = None
         self.setWindowTitle("Clippiti Player")
         self.resize(1280, 760)
 
@@ -74,11 +88,11 @@ class MainWindow(QMainWindow):
 
         self.strip = ControlStrip(
             self.video,
-            self.video,
             trigger_radius,
-            on_osd_message=self.show_osd_message,
         )
         self.strip.raise_()
+        self._wire_toolbar_actions()
+        self._apply_audio_state()
 
         self._reposition_timer = QTimer(self)
         self._reposition_timer.setSingleShot(True)
@@ -95,6 +109,14 @@ class MainWindow(QMainWindow):
         self._shutting_down = True
         log.debug("window: shutdown begin")
         self._reposition_timer.stop()
+        if self._recording.is_recording() and not self._stop_in_progress:
+            try:
+                self._recording.abort()
+                log.info("recording: aborted on shutdown")
+            except Exception:
+                log.exception("recording: abort error on shutdown")
+        self._remux_service.shutdown()
+        self._recording.shutdown()
         self.strip.shutdown()
         self.video.shutdown()
         log.info("window: shutdown complete")
@@ -104,11 +126,171 @@ class MainWindow(QMainWindow):
 
     def set_media_source(self, media_source: str) -> None:
         self.video.set_media_source(media_source)
-        self.strip.sync_player_state()
+        self._apply_audio_state()
         self.osd.clear_message()
 
-    def show_osd_message(self, title: str, detail: str | None = None, persistent: bool = False) -> None:
-        self.osd.show_message(title, detail, persistent=persistent)
+    def set_runtime(self, runtime) -> None:
+        self._runtime = runtime
+
+    def _wire_toolbar_actions(self) -> None:
+        if self.strip.mute_action is not None:
+            self.strip.mute_action.triggered.connect(self._mute_action)
+        if self.strip.record_action is not None:
+            self.strip.record_action.triggered.connect(self._toggle_recording)
+        if self.strip.clip_action is not None:
+            self.strip.clip_action.triggered.connect(self._clip_action)
+        if self.strip.snapshot_action is not None:
+            self.strip.snapshot_action.triggered.connect(self._snapshot_action)
+        if self.strip.move_action is not None:
+            self.strip.move_action.triggered.connect(self._move_toolbar_action)
+        if self.strip.settings_action is not None:
+            self.strip.settings_action.triggered.connect(self._settings_action)
+
+    def _mute_action(self) -> None:
+        self.video.muted = not self.video.muted
+        self._apply_audio_state()
+        self.osd.show_message(self._volume_osd_title(), self._volume_osd_detail())
+
+    def _snapshot_action(self) -> None:
+        if self.video.render_ctx is None:
+            return
+        out = Path.home() / "Pictures" / "Clippiti" / "snapshots"
+        out.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        target = out / f"snapshot_{ts}.png"
+
+        image = self.video.grabFramebuffer()
+        if not image.isNull() and image.save(str(target), "PNG"):
+            self.osd.show_message("snapshot saved")
+
+    def _move_toolbar_action(self) -> None:
+        mods = QApplication.keyboardModifiers()
+        step = -1 if mods & Qt.KeyboardModifier.ControlModifier else 1
+        self.strip.move_position(step)
+
+    def _apply_audio_state(self) -> None:
+        self.strip.set_audio_ui_state(self.video.volume, self.video.muted)
+
+    def _adjust_volume(self, delta: int) -> bool:
+        new_volume = max(0, min(100, self.video.volume + delta))
+        if new_volume == self.video.volume:
+            return False
+        self.video.volume = new_volume
+        if self.video.volume > 0 and self.video.muted:
+            self.video.muted = False
+        self._apply_audio_state()
+        self.osd.show_message(self._volume_osd_title(), self._volume_osd_detail())
+        return True
+
+    def _volume_osd_title(self) -> str:
+        if self.video.muted or self.video.volume <= 0:
+            return "Muted"
+        return f"Volume {self.video.volume}%"
+
+    def _volume_osd_detail(self) -> str | None:
+        if self.video.muted or self.video.volume <= 0:
+            return None
+        blocks = max(1, min(10, round(self.video.volume / 10)))
+        return "|" * blocks
+
+    def _toggle_recording(self) -> None:
+        if self._recording.is_recording():
+            self._stop_recording()
+        else:
+            self._start_recording()
+
+    def _start_recording(self) -> None:
+        if self._runtime is None:
+            self.osd.show_message("Recording", "Stream not ready yet")
+            return
+        if self._recording_cfg is None:
+            self.osd.show_message("Recording", "Recording not configured")
+            return
+        try:
+            path = self._recording.start(self._runtime, self._recording_cfg)
+            log.info("recording: started output=%s", path)
+            self.osd.show_message("Recording", f"Saving to {path.name}")
+            self.strip.set_recording(True)
+        except Exception as exc:
+            log.error("recording: failed to start: %s", exc)
+            self.osd.show_message("Recording failed", str(exc))
+
+    def _stop_recording(self) -> None:
+        if self._stop_in_progress:
+            return
+
+        try:
+            cfg = self._recording_cfg or RecordingConfig(output_dir=Path.home())
+            self._stop_cfg = cfg
+            self._stop_in_progress = True
+            self.strip.set_recording(False)
+            self.osd.show_message("Recording", "Stopping...", persistent=True)
+            if not self._recording.request_stop():
+                self._stop_in_progress = False
+        except Exception as exc:
+            self._stop_in_progress = False
+            log.error("recording: failed to stop: %s", exc)
+            self.osd.show_message("Recording error", str(exc))
+
+    @pyqtSlot(object)
+    def _handle_recording_stopped(self, ts_path_obj: object) -> None:
+        ts_path = Path(str(ts_path_obj))
+        cfg = self._stop_cfg or RecordingConfig(output_dir=Path.home())
+        self._stop_in_progress = False
+        self._stop_cfg = None
+
+        if cfg.auto_remux_to_mp4:
+            stderr_path = ts_path.with_suffix(".stderr.log") if log.isEnabledFor(logging.DEBUG) else None
+            job = RemuxJob(
+                source_path=ts_path,
+                target_path=ts_path.with_suffix(".mp4"),
+                ffmpeg_path=cfg.ffmpeg_path,
+                remove_source_on_success=True,
+                stderr_path=stderr_path,
+                kind="recording",
+            )
+            target_path = self._remux_service.enqueue(job)
+            log.info("recording: stopped output=%s remuxing=%s", ts_path, target_path)
+            self.osd.show_message("Recording stopped", f"Remuxing: {target_path.name}", persistent=True)
+            return
+
+        log.info("recording: stopped output=%s remuxed=%s", ts_path, False)
+        self.osd.show_message("Recording stopped", f"Saved: {ts_path.name}")
+
+    @pyqtSlot(object)
+    def _handle_recording_stop_failed(self, exc_obj: object) -> None:
+        self._stop_in_progress = False
+        self._stop_cfg = None
+        log.error("recording: failed to stop: %s", exc_obj)
+        self.osd.show_message("Recording error", str(exc_obj))
+
+    @pyqtSlot(object)
+    def _on_remux_job_finished(self, result_obj: object) -> None:
+        result = result_obj
+        if not isinstance(result, RemuxJobResult):
+            return
+
+        if result.success:
+            log.info("recording: stopped output=%s remuxed=%s", result.job.target_path, True)
+            self.osd.show_message("Recording stopped", f"Saved: {result.job.target_path.name} (remuxed to mp4)")
+            return
+
+        if result.job.stderr_path is not None:
+            log.warning(
+                "recording: remux failed code=%s stderr_log=%s",
+                result.exit_code,
+                result.job.stderr_path,
+            )
+        else:
+            log.warning("recording: remux failed code=%s", result.exit_code)
+        log.info("recording: stopped output=%s remuxed=%s", result.job.source_path, False)
+        self.osd.show_message("Recording stopped", f"Saved: {result.job.source_path.name}")
+
+    def _clip_action(self) -> None:
+        self.osd.show_message("clip", "Clip dialog coming soon")
+
+    def _settings_action(self) -> None:
+        self.osd.show_message("settings", "Settings dialog coming soon")
 
     def closeEvent(self, event) -> None:  # noqa: N802
         self.shutdown()
@@ -120,13 +302,17 @@ class MainWindow(QMainWindow):
 
     def handle_volume_wheel(self, delta_y: int) -> bool:
         if delta_y > 0:
-            return self.strip.adjust_volume(5)
+            return self._adjust_volume(5)
         if delta_y < 0:
-            return self.strip.adjust_volume(-5)
+            return self._adjust_volume(-5)
         return False
 
     def handle_volume_key(self, key: int) -> bool:
-        return self.strip.handle_volume_key(key)
+        if key in (Qt.Key.Key_Minus, Qt.Key.Key_PageDown):
+            return self._adjust_volume(-5)
+        if key in (Qt.Key.Key_Plus, Qt.Key.Key_Equal, Qt.Key.Key_PageUp):
+            return self._adjust_volume(5)
+        return False
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
         key = event.key()
@@ -141,23 +327,22 @@ class MainWindow(QMainWindow):
             return
 
         if key == Qt.Key.Key_S:
-            self.strip.trigger_snapshot()
-            self.osd.show_message("snapshot saved")
+            self._snapshot_action()
             event.accept()
             return
 
         if key == Qt.Key.Key_C:
-            self.osd.show_message("clip", "Clip dialog coming soon")
+            self._clip_action()
             event.accept()
             return
 
         if key == Qt.Key.Key_R:
-            self.osd.show_message("record", "Recording coming soon")
+            self._toggle_recording()
             event.accept()
             return
 
         if key == Qt.Key.Key_M:
-            self.strip.trigger_mute()
+            self._mute_action()
             event.accept()
             return
 
@@ -186,6 +371,7 @@ def run_app(
     trigger_radius: int,
     resize_debounce_ms: int,
     window_title: str | None = None,
+    recording_cfg: RecordingConfig | None = None,
     startup_task: Callable[[], object] | None = None,
     on_startup_ready: Callable[[MainWindow, object], None] | None = None,
     on_startup_failed: Callable[[Exception], None] | None = None,
@@ -197,6 +383,7 @@ def run_app(
         mpv_options,
         trigger_radius,
         resize_debounce_ms,
+        recording_cfg=recording_cfg,
     )
     if window_title:
         window.set_window_title(window_title)

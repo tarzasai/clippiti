@@ -19,6 +19,7 @@ locale.setlocale(locale.LC_NUMERIC, "C")
 
 class VideoSurface(QOpenGLWidget):
     frame_ready = pyqtSignal()
+    DEFAULT_VOLUME = 70
 
     def __init__(
         self,
@@ -32,11 +33,33 @@ class VideoSurface(QOpenGLWidget):
         self._start_seconds = max(0, int(start_seconds))
         self._mpv_options = dict(mpv_options)
         self._shutting_down = False
+        self._volume = self.DEFAULT_VOLUME
+        self._muted = False
 
         self.player: mpv.MPV | None = None
         self.render_ctx: mpv.MpvRenderContext | None = None
         self._gl_proc_addr: mpv.MpvGlGetProcAddressFn | None = None
         self.frame_ready.connect(self._maybe_paint_next_frame)
+
+    @property
+    def volume(self) -> int:
+        return self._volume
+
+    @volume.setter
+    def volume(self, value: int) -> None:
+        self._volume = max(0, min(100, int(value)))
+        if self.player is not None:
+            self.player.volume = self._volume
+
+    @property
+    def muted(self) -> bool:
+        return self._muted
+
+    @muted.setter
+    def muted(self, value: bool) -> None:
+        self._muted = bool(value)
+        if self.player is not None:
+            self.player.mute = self._muted
 
     def shutdown(self) -> None:
         if self._shutting_down:
@@ -98,8 +121,8 @@ class VideoSurface(QOpenGLWidget):
 
         player_options = dict(self._mpv_options)
         player_options["start"] = self._start_seconds
-        player_options["volume"] = 70
-        player_options["mute"] = False
+        player_options["volume"] = self._volume
+        player_options["mute"] = self._muted
         player_options["audio_client_name"] = "Clippiti"
 
         self.player = mpv.MPV(**player_options)
