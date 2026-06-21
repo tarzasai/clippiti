@@ -40,6 +40,18 @@ class StartupWorker(QObject):
         self.finished.emit(result)
 
 
+_HELP_TEXT = (
+    "<code><b>H</b></code> - Help<br>"
+    "<code><b>S</b></code> - Snapshot<br>"
+    "<code><b>C</b></code> - Clip dialog<br>"
+    "<code><b>R</b></code> - Start / stop recording<br>"
+    "<code><b>M</b></code> - Mute / Unmute<br>"
+    "<code><b>P</b></code> - Pin / Unpin toolbar<br>"
+    "<code><b>T</b></code> - Next toolbar position (<code><b>Shift+T</b></code> Previous)<br>"
+    "<code><b>-/+</b></code> &nbsp; <code><b>PgDn/PgUp</b></code> &nbsp; <code><b>Wheel</b></code> - Volume"
+)
+
+
 class MainWindow(QMainWindow):
     def __init__(
         self,
@@ -58,7 +70,7 @@ class MainWindow(QMainWindow):
 
         self.osd = OsdOverlay(self.video)
         if not media_source:
-            self.osd.show_message("Buffering stream", "Preparing rolling buffer...", persistent=True)
+            self.osd.show_message("loading stream", persistent=True)
 
         self.strip = ControlStrip(
             self.video,
@@ -87,6 +99,9 @@ class MainWindow(QMainWindow):
         self.video.shutdown()
         log.info("window: shutdown complete")
 
+    def set_window_title(self, title: str) -> None:
+        self.setWindowTitle(title)
+
     def set_media_source(self, media_source: str) -> None:
         self.video.set_media_source(media_source)
         self.strip.sync_player_state()
@@ -114,9 +129,54 @@ class MainWindow(QMainWindow):
         return self.strip.handle_volume_key(key)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
-        if self.handle_volume_key(event.key()):
+        key = event.key()
+        mods = event.modifiers()
+
+        if key == Qt.Key.Key_H:
+            if self.osd.isVisible():
+                self.osd.clear_message()
+            else:
+                self.osd.show_message("keyboard shortcuts", _HELP_TEXT, persistent=True)
             event.accept()
             return
+
+        if key == Qt.Key.Key_S:
+            self.strip.trigger_snapshot()
+            self.osd.show_message("snapshot saved")
+            event.accept()
+            return
+
+        if key == Qt.Key.Key_C:
+            self.osd.show_message("clip", "Clip dialog coming soon")
+            event.accept()
+            return
+
+        if key == Qt.Key.Key_R:
+            self.osd.show_message("record", "Recording coming soon")
+            event.accept()
+            return
+
+        if key == Qt.Key.Key_M:
+            self.strip.trigger_mute()
+            event.accept()
+            return
+
+        if key == Qt.Key.Key_P:
+            pinned = self.strip.toggle_pin()
+            self.osd.show_message("toolbar pinned" if pinned else "toolbar unpinned")
+            event.accept()
+            return
+
+        if key == Qt.Key.Key_T:
+            step = -1 if mods & Qt.KeyboardModifier.ShiftModifier else 1
+            self.strip.move_position(step)
+            event.accept()
+            return
+
+        if self.handle_volume_key(key):
+            event.accept()
+            return
+
         super().keyPressEvent(event)
 
 
@@ -125,6 +185,7 @@ def run_app(
     mpv_options: dict[str, object],
     trigger_radius: int,
     resize_debounce_ms: int,
+    window_title: str | None = None,
     startup_task: Callable[[], object] | None = None,
     on_startup_ready: Callable[[MainWindow, object], None] | None = None,
     on_startup_failed: Callable[[Exception], None] | None = None,
@@ -137,6 +198,8 @@ def run_app(
         trigger_radius,
         resize_debounce_ms,
     )
+    if window_title:
+        window.set_window_title(window_title)
     startup_result = None
     startup_thread = None
     startup_worker = None

@@ -99,6 +99,8 @@ class VideoSurface(QOpenGLWidget):
         player_options = dict(self._mpv_options)
         player_options["start"] = self._start_seconds
         player_options["volume"] = 70
+        player_options["mute"] = False
+        player_options["audio_client_name"] = "Clippiti"
 
         self.player = mpv.MPV(**player_options)
 

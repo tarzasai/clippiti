@@ -92,6 +92,7 @@ class ControlStrip(QFrame):
         self._actions = []
         self._volume = 70
         self._muted = False
+        self._pinned = False
 
         for idx, (icon_name, tip, slot) in enumerate(specs):
             action = self._toolbar.addAction(QIcon.fromTheme(icon_name), tip)
@@ -182,6 +183,8 @@ class ControlStrip(QFrame):
         self._anim.start()
 
     def _set_hovering(self, hovering: bool) -> None:
+        if self._pinned and not hovering:
+            return
         if hovering:
             self._collapse_timer.stop()
         if hovering == self._hovering:
@@ -190,6 +193,8 @@ class ControlStrip(QFrame):
         self._animate_to(self._expanded_pos() if hovering else self._collapsed_pos())
 
     def _schedule_collapse(self) -> None:
+        if self._pinned:
+            return
         if self._hovering and not self._collapse_timer.isActive():
             self._collapse_timer.start()
 
@@ -337,14 +342,34 @@ class ControlStrip(QFrame):
         super().keyPressEvent(event)
 
     def _do_move(self) -> None:
-        self._anim.stop()
         mods = QApplication.keyboardModifiers()
         step = -1 if mods & Qt.KeyboardModifier.ControlModifier else 1
+        self.move_position(step)
+
+    def move_position(self, step: int = 1) -> None:
+        self._anim.stop()
         self._state_idx = (self._state_idx + step) % len(self.STATES)
-        self._hovering = False
+        target_hovering = self._pinned
+        self._hovering = target_hovering
         self._place_buttons()
-        self.move(self._collapsed_pos())
+        self.move(self._expanded_pos() if target_hovering else self._collapsed_pos())
         self.raise_()
+
+    def toggle_pin(self) -> bool:
+        """Toggle pinned state. Returns new pinned state."""
+        self._pinned = not self._pinned
+        if self._pinned:
+            self._collapse_timer.stop()
+            if not self._hovering:
+                self._hovering = True
+                self._animate_to(self._expanded_pos())
+        return self._pinned
+
+    def trigger_snapshot(self) -> None:
+        self._do_snapshot()
+
+    def trigger_mute(self) -> None:
+        self._do_mute()
 
     def _do_snapshot(self) -> None:
         if self._video.render_ctx is None:

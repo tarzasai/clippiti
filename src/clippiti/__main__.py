@@ -126,6 +126,8 @@ def main(argv: list[str] | None = None) -> int:
         metadata.title,
     )
 
+    window_title = f"{metadata.author} - {metadata.category} - {metadata.title} - clippiti"
+
     startup_cancel = threading.Event()
 
     def startup_pipeline():
@@ -166,6 +168,7 @@ def main(argv: list[str] | None = None) -> int:
             mpv_options=mpv_options,
             trigger_radius=trigger_radius,
             resize_debounce_ms=resize_debounce_ms,
+            window_title=window_title,
             startup_task=startup_pipeline,
             on_startup_ready=handle_runtime_ready,
             on_startup_failed=handle_runtime_failure,
