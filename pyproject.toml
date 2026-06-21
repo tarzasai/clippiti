@@ -19,3 +19,7 @@ clippiti = "clippiti.__main__:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/clippiti"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=clippiti.services --cov=clippiti.model.config --cov-report=term-missing --cov-fail-under=80"

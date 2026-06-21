@@ -7,3 +7,4 @@ streamlink>=6.0
 # Development / testing
 pytest>=8.0
 pytest-qt>=4.4
+pytest-cov>=7.0
