@@ -606,7 +606,7 @@ def run_app(
   app.setApplicationName('Clippiti')
   app.setWindowIcon(QIcon(str(ICON_PATH)))
   try:
-    app.setDesktopFileName('clippiti.desktop') # Linux integration
+    app.setDesktopFileName('clippiti.desktop')  # Linux integration
   except Exception:
     pass  # Older Qt bindings or platforms may not support this; ignore safely.
   app.setQuitOnLastWindowClosed(True)
