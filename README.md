@@ -133,6 +133,6 @@ MIT License - see `LICENSE` if present in this repository.
 
 ## Screenshots
 
-![Main Window](doc/media/main-window.png)
-![Clip Dialog](doc/media/clip-dialog.png)
-![Settings Dialog](doc/media/settings-dialog.png)
+![Main Window](https://raw.githubusercontent.com/tarzasai/Clippiti/main/doc/media/main-window.png)
+![Clip Dialog](https://raw.githubusercontent.com/tarzasai/Clippiti/main/doc/media/clip-dialog.png)
+![Settings Dialog](https://raw.githubusercontent.com/tarzasai/Clippiti/main/doc/media/settings-dialog.png)
