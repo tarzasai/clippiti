@@ -1,0 +1,12 @@
+# Include icons and resources in the package distribution
+recursive-include src/clippiti/resources *.png *.svg *.ico *.jpg *.jpeg
+
+# Include documentation
+include README.md
+include LICENSE
+include requirements.txt
+
+# Exclude unnecessary files
+global-exclude __pycache__
+global-exclude *.py[cod]
+global-exclude .DS_Store
