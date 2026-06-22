@@ -70,7 +70,12 @@ class RecordingService:
       "-loglevel", "error",
       "-y",
       "-i", str(runtime.playlist_path),
-      "-c", "copy",
+      "-map", "0:v:0?",
+      "-map", "0:a?",
+      "-sn",
+      "-dn",
+      "-c:v", "copy",
+      "-c:a", "copy",
       str(ts_path),
     ]
     log.debug("recording: starting ffmpeg command: %s", cmd)
@@ -257,7 +262,12 @@ def _remux(src: Path, dst: Path, ffmpeg_path: str, stderr_path: Path | None) -> 
     "-hide_banner", "-loglevel", "error",
     "-y",
     "-i", str(src),
+    "-map", "0:v:0?",
+    "-map", "0:a?",
+    "-sn",
+    "-dn",
     "-c", "copy",
+    "-movflags", "+faststart",
     str(dst),
   ]
   log.debug("recording: remuxing %s -> %s", src, dst)

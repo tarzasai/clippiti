@@ -17,6 +17,8 @@ log = logging.getLogger("clippiti.services.clipper")
 
 _EXTINF_RE = re.compile(r"#EXTINF:([\d.]+)")
 _FFMPEG_QUIET = ["-hide_banner", "-loglevel", "error"]
+_STAGE_MERGE_TIMEOUT_S = 25
+_PREVIEW_TIMEOUT_S = 8
 
 
 @dataclass
@@ -81,7 +83,13 @@ class ClipService:
         "copy",
         str(merged_ts_path),
       ]
-      subprocess.run(merge_command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+      subprocess.run(
+        merge_command,
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=_STAGE_MERGE_TIMEOUT_S,
+      )
 
       return ClipBufferStage(
         stage_dir=stage_dir,
@@ -200,8 +208,14 @@ class ClipService:
       str(output_path),
     ]
     try:
-      subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except subprocess.CalledProcessError:
+      subprocess.run(
+        command,
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=_PREVIEW_TIMEOUT_S,
+      )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
       fallback = [
         self._config.ffmpeg_path,
         "-y",
@@ -215,8 +229,14 @@ class ClipService:
         str(output_path),
       ]
       try:
-        subprocess.run(fallback, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-      except subprocess.CalledProcessError:
+        subprocess.run(
+          fallback,
+          check=True,
+          stdout=subprocess.DEVNULL,
+          stderr=subprocess.DEVNULL,
+          timeout=_PREVIEW_TIMEOUT_S,
+        )
+      except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return None
     return output_path
 

@@ -75,6 +75,33 @@ def test_recording_start_generates_sanitized_filename(tmp_path: Path, monkeypatc
   assert ts_path.name == "Author_Name-20260101_120000.ts"
 
 
+def test_recording_start_builds_audio_video_mapping_command(tmp_path: Path, monkeypatch) -> None:
+  playlist = tmp_path / "live.m3u8"
+  playlist.write_text("#EXTM3U\n", encoding="utf-8")
+  runtime = _runtime_with_playlist(playlist)
+
+  captured: dict[str, object] = {}
+
+  def fake_spawn(cmd, stderr_path):
+    captured["cmd"] = cmd
+    captured["stderr_path"] = stderr_path
+    return _DummyProc()
+
+  monkeypatch.setattr(recording_mod, "_spawn_ffmpeg", fake_spawn)
+
+  service = RecordingService()
+  ts_path = service.start(runtime, RecordingConfig(output_dir=tmp_path))
+
+  cmd = captured["cmd"]
+  assert isinstance(cmd, list)
+  assert "-map" in cmd
+  assert "0:v:0?" in cmd
+  assert "0:a?" in cmd
+  assert "-c:v" in cmd
+  assert "-c:a" in cmd
+  assert cmd[-1] == str(ts_path)
+
+
 def test_recording_start_fails_when_playlist_missing(tmp_path: Path) -> None:
   runtime = _runtime_with_playlist(tmp_path / "missing.m3u8")
   service = RecordingService()
@@ -273,8 +300,20 @@ def test_remux_success_returns_true(monkeypatch, tmp_path: Path) -> None:
   class _Result:
     returncode = 0
 
-  monkeypatch.setattr(recording_mod.subprocess, "run", lambda *a, **k: _Result())
+  captured: dict[str, object] = {}
+
+  def fake_run(cmd, *args, **kwargs):
+    captured["cmd"] = cmd
+    return _Result()
+
+  monkeypatch.setattr(recording_mod.subprocess, "run", fake_run)
   assert recording_mod._remux(src, out, "ffmpeg", None) is True
+  cmd = captured["cmd"]
+  assert isinstance(cmd, list)
+  assert "-map" in cmd
+  assert "0:v:0?" in cmd
+  assert "0:a?" in cmd
+  assert "-movflags" in cmd
 
 
 def test_remux_exception_returns_false(monkeypatch, tmp_path: Path) -> None:

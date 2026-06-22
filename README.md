@@ -133,8 +133,6 @@ MIT License - see `LICENSE` if present in this repository.
 
 ## Screenshots
 
-Placeholders (replace these with real screenshots):
-
-![Main Window Placeholder](doc/media/placeholder-main-window.png)
-![Clip Dialog Placeholder](doc/media/placeholder-clip-dialog.png)
-![Settings Dialog Placeholder](doc/media/placeholder-settings-dialog.png)
+![Main Window](doc/media/main-window.png)
+![Clip Dialog](doc/media/clip-dialog.png)
+![Settings Dialog](doc/media/settings-dialog.png)

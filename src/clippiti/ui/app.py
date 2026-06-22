@@ -9,16 +9,16 @@ import logging
 from copy import deepcopy
 
 from PyQt6.QtCore import QObject, QThread, QTimer, Qt, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QKeyEvent, QResizeEvent
+from PyQt6.QtGui import QIcon, QKeyEvent, QResizeEvent
 from PyQt6.QtWidgets import QApplication, QMainWindow, QMessageBox
 
-from .clip_dialog import ClipRangeDialog
+from .clip_dialog import ClipWorkflow
 from .control_strip import ControlStrip
 from .osd import OsdOverlay
 from .settings_dialog import SettingsDialog
 from .video_surface import VideoSurface
 from ..model.config import ensure_output_dirs, normalize_config, save_config
-from ..services.clipper import ClipBufferStage, ClipConfig, ClipExportContext, ClipService
+from ..services.clipper import ClipConfig, ClipService
 from ..services.recording import AsyncRecordingService, RecordingConfig
 from ..services.remux_queue import FfmpegJobResult, RemuxJob, RemuxQueueService
 
@@ -60,8 +60,11 @@ _HELP_TEXT = (
   "<code><b>-/+</b></code> &nbsp; <code><b>PgDn/PgUp</b></code> &nbsp; <code><b>Wheel</b></code> - Volume"
 )
 
+ICON_PATH = Path(__file__).parent.parent / "resources" / "icons" / "app-icon.png"
+
 
 class MainWindow(QMainWindow):
+
   def __init__(
     self,
     media_source: str | None,
@@ -74,6 +77,10 @@ class MainWindow(QMainWindow):
     config_path: Path | None = None,
   ) -> None:
     super().__init__()
+    self.setWindowTitle("Clippiti Player")
+    self.setWindowIcon(QIcon(str(ICON_PATH)))
+    self.resize(1280, 760)
+
     self._shutting_down = False
     self._runtime = None
     self._config = normalize_config(deepcopy(config) if config is not None else {})
@@ -85,15 +92,13 @@ class MainWindow(QMainWindow):
     self._remux_service.job_finished.connect(self._on_remux_job_finished)
     self._clip_cfg = clip_cfg
     self._clip_service = ClipService(clip_cfg) if clip_cfg is not None else None
+    self._clip_workflow: ClipWorkflow | None = None
     self._recording_cfg = recording_cfg
     self._snapshot_dir = Path.home() / "Pictures" / "Clippiti" / "snapshots"
     self._snapshot_filename_format = "{name}_{timestamp}"
     self._stop_in_progress = False
     self._stop_cfg: RecordingConfig | None = None
     self._offline_close_pending = False
-    self.setWindowTitle("Clippiti Player")
-    self.resize(1280, 760)
-
     self.video = VideoSurface(media_source, mpv_options)
     self.setCentralWidget(self.video)
 
@@ -211,6 +216,34 @@ class MainWindow(QMainWindow):
     self.strip.move_action.triggered.connect(self._move_toolbar_action)
     self.strip.settings_action.triggered.connect(self._settings_action)
 
+  def _show_osd_message(self, title: str, detail: str | None, persistent: bool) -> None:
+    self.osd.show_message(title, detail, persistent=persistent)
+
+  def _clear_osd_message(self) -> None:
+    self.osd.clear_message()
+
+  def _is_player_muted(self) -> bool:
+    return self.video.muted
+
+  def _set_player_muted(self, muted: bool) -> None:
+    self.video.muted = muted
+    self._apply_audio_state()
+
+  def _rebuild_clip_workflow(self) -> None:
+    if self._clip_service is None or self._clip_cfg is None:
+      self._clip_workflow = None
+      return
+    self._clip_workflow = ClipWorkflow(
+      clip_service=self._clip_service,
+      clip_cfg=self._clip_cfg,
+      enqueue_job=self._remux_service.enqueue,
+      show_message=self._show_osd_message,
+      clear_message=self._clear_osd_message,
+      is_player_muted=self._is_player_muted,
+      set_player_muted=self._set_player_muted,
+      parent=self,
+    )
+
   def _mute_action(self) -> None:
     self.video.muted = not self.video.muted
     self._apply_audio_state()
@@ -313,10 +346,30 @@ class MainWindow(QMainWindow):
 
     if cfg.auto_remux_to_mp4:
       stderr_path = ts_path.with_suffix(".stderr.log") if log.isEnabledFor(logging.DEBUG) else None
+      target_path = ts_path.with_suffix(".mp4")
       job = RemuxJob(
         source_path=ts_path,
-        target_path=ts_path.with_suffix(".mp4"),
+        target_path=target_path,
         ffmpeg_path=cfg.ffmpeg_path,
+        arguments=[
+          "-hide_banner",
+          "-loglevel",
+          "error",
+          "-y",
+          "-i",
+          str(ts_path),
+          "-map",
+          "0:v:0?",
+          "-map",
+          "0:a?",
+          "-sn",
+          "-dn",
+          "-c",
+          "copy",
+          "-movflags",
+          "+faststart",
+          str(target_path),
+        ],
         remove_source_on_success=True,
         stderr_path=stderr_path,
         kind="recording",
@@ -343,7 +396,8 @@ class MainWindow(QMainWindow):
       return
 
     if result.job.kind == "clip":
-      self._handle_clip_job_finished(result)
+      if self._clip_workflow is not None:
+        self._clip_workflow.handle_clip_job_finished(result)
       return
 
     if result.success:
@@ -366,93 +420,10 @@ class MainWindow(QMainWindow):
     if self._runtime is None:
       self.osd.show_message("Clip", "Stream not ready yet")
       return
-    if self._clip_service is None or self._clip_cfg is None:
+    if self._clip_workflow is None:
       self.osd.show_message("Clip", "Clip service not configured")
       return
-
-    stage: ClipBufferStage | None = None
-    dialog: ClipRangeDialog | None = None
-    preview_timer: QTimer | None = None
-    restore_mute_on_exit = False
-
-    try:
-      self.osd.show_message("Clip", "Preparing clip...", persistent=True)
-      stage = self._clip_service.prepare_stage(self._runtime)
-      total_seconds = max(ClipRangeDialog.MIN_DURATION, int(stage.total_seconds + 0.999))
-      end_seconds = total_seconds
-      start_seconds = max(0, end_seconds - int(self._clip_cfg.default_duration))
-
-      dialog = ClipRangeDialog(self)
-      dialog.set_timeline_max(total_seconds)
-      dialog.set_selected_range(start_seconds, end_seconds)
-      dialog.set_video_source(stage.merged_ts_path)
-
-      preview_timer = QTimer(dialog)
-      preview_timer.setSingleShot(True)
-      preview_timer.setInterval(120)
-      preview_timer.timeout.connect(lambda: self._refresh_clip_previews(dialog, stage))
-      dialog.on_range_changed(lambda: preview_timer.start())
-
-      self._refresh_clip_previews(dialog, stage)
-      if not self.video.muted:
-        self.video.muted = True
-        self._apply_audio_state()
-        restore_mute_on_exit = True
-
-      dialog_result = dialog.exec()
-
-      if restore_mute_on_exit:
-        self.video.muted = False
-        self._apply_audio_state()
-        restore_mute_on_exit = False
-
-      if dialog_result != dialog.DialogCode.Accepted:
-        self._clip_service.cleanup(stage)
-        self.osd.clear_message()
-        return
-
-      start_selected, end_selected = dialog.selected_range()
-      job = self._clip_service.build_export_job(
-        stage,
-        self._runtime.stream_author,
-        float(start_selected),
-        float(end_selected),
-      )
-      target_path = self._remux_service.enqueue(job)
-      log.info("clip: queued output=%s", target_path)
-      self.osd.show_message("Clip", f"Exporting: {target_path.name}", persistent=True)
-    except Exception as exc:
-      if stage is not None and self._clip_service is not None:
-        self._clip_service.cleanup(stage)
-      log.error("clip: failed: %s", exc)
-      self.osd.show_message("Clip failed", str(exc))
-    finally:
-      if restore_mute_on_exit:
-        self.video.muted = False
-        self._apply_audio_state()
-
-  def _refresh_clip_previews(self, dialog: ClipRangeDialog, stage: ClipBufferStage) -> None:
-    if self._clip_service is None:
-      return
-    start_seconds, end_seconds = dialog.selected_range()
-    start_image, end_image = self._clip_service.preview_frames(stage, float(start_seconds), float(end_seconds))
-    dialog.set_preview_images(start_image, end_image)
-
-  def _handle_clip_job_finished(self, result: FfmpegJobResult) -> None:
-    context = result.job.context
-    if isinstance(context, ClipExportContext) and self._clip_service is not None:
-      self._clip_service.cleanup(context.stage)
-
-    if result.success:
-      log.info("clip: exported output=%s", result.job.target_path)
-      self.osd.show_message("Clip saved", result.job.target_path.name)
-      return
-
-    if result.job.stderr_path is not None:
-      log.warning("clip: export failed code=%s stderr_log=%s", result.exit_code, result.job.stderr_path)
-    else:
-      log.warning("clip: export failed code=%s", result.exit_code)
-    self.osd.show_message("Clip failed", "Export failed")
+    self._clip_workflow.run_clip_dialog(self._runtime, self)
 
   def _settings_action(self) -> None:
     dialog = SettingsDialog(self._config, self)
@@ -508,6 +479,7 @@ class MainWindow(QMainWindow):
       default_duration=int(clip.get("default_duration", 30)),
     )
     self._clip_service = ClipService(self._clip_cfg)
+    self._rebuild_clip_workflow()
 
     self._snapshot_dir = Path(str(snapshot.get("dir", "~/Pictures/Clippiti/snapshots"))).expanduser()
     self._snapshot_filename_format = str(snapshot.get("filename_format", "{name}_{timestamp}"))
