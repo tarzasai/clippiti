@@ -9,6 +9,10 @@ import threading
 import shutil
 import importlib.util
 
+os.environ.setdefault('QT_QPA_ORG_NAME', 'Clippiti')
+os.environ.setdefault('QT_QPA_APPLICATION_NAME', 'Clippiti')
+os.environ.setdefault('QT_LOGGING_RULES', 'qt.qpa.services=false')
+
 from .services.buffer_engine import cleanup_orphan_session_dirs
 from .services.buffer_engine import resolve_stream_metadata
 from .services.buffer_engine import cleanup_runtime_artifacts

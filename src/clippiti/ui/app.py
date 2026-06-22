@@ -11,6 +11,7 @@ from copy import deepcopy
 from PyQt6.QtCore import QObject, QThread, QTimer, Qt, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QIcon, QKeyEvent, QResizeEvent
 from PyQt6.QtWidgets import QApplication, QMainWindow, QMessageBox
+import os
 
 from .clip_dialog import ClipWorkflow
 from .control_strip import ControlStrip
@@ -78,7 +79,6 @@ class MainWindow(QMainWindow):
   ) -> None:
     super().__init__()
     self.setWindowTitle("Clippiti Player")
-    self.setWindowIcon(QIcon(str(ICON_PATH)))
     self.resize(1280, 760)
 
     self._shutting_down = False
@@ -603,6 +603,13 @@ def run_app(
   on_startup_cancel: Callable[[], None] | None = None,
 ) -> AppRunResult:
   app = QApplication(sys.argv)
+  app.setApplicationName('Clippiti')
+  app.setWindowIcon(QIcon(str(ICON_PATH)))
+  try:
+    app.setDesktopFileName('clippiti.desktop') # Linux integration
+  except Exception:
+    pass  # Older Qt bindings or platforms may not support this; ignore safely.
+  app.setQuitOnLastWindowClosed(True)
   window = MainWindow(
     media_source,
     mpv_options,
