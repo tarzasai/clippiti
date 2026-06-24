@@ -18,13 +18,78 @@ Supported OS: Linux, Windows, macOS
 ## Requirements
 
 - Python 3.12+
-- `streamlink` installed and available in `PATH`
-- `ffmpeg` installed and available in `PATH` (or configured path)
 - Desktop environment that supports PyQt6 apps
+
+### Non-Python dependencies
+
+Clippiti requires these external tools at runtime:
+
+- `mpv` / `libmpv` (used by `python-mpv` for playback)
+- `ffmpeg`
+
+`streamlink` is installed from Python packaging (`clippiti-player` dependency), so you do not need to install a system `streamlink` package.
+
+Install them with your OS package manager.
+
+Linux:
+
+```bash
+# Ubuntu / Debian
+sudo apt install mpv libmpv2 ffmpeg
+
+# Fedora
+sudo dnf install mpv mpv-libs ffmpeg
+
+# Arch Linux
+sudo pacman -S mpv ffmpeg
+```
+
+macOS:
+
+```bash
+brew install mpv ffmpeg
+```
+
+Windows (PowerShell, using Scoop):
+
+```powershell
+scoop install mpv ffmpeg
+```
+
+Verify they are available in `PATH`:
+
+```bash
+mpv --version
+ffmpeg -version
+```
+
+Verify Python-installed Streamlink version from the same environment used to run Clippiti:
+
+```bash
+python -m streamlink --version
+```
 
 ## Install
 
-From source (recommended for now):
+From PyPI (recommended):
+
+```bash
+pip install clippiti-player
+```
+
+or with pipx:
+
+```bash
+pipx install clippiti-player
+```
+
+Run:
+
+```bash
+clippiti <url> <quality>
+```
+
+### Install from source (development)
 
 ```bash
 git clone <your-repo-url>
@@ -33,12 +98,6 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 pip install -e .
-```
-
-Run:
-
-```bash
-clippiti <url> <quality>
 ```
 
 Alternative without editable install:

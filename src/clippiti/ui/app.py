@@ -56,7 +56,7 @@ class StartupWorker(QObject):
 
 _HELP_TEXT = (
   "<table cellspacing='0' cellpadding='2'>"
-  "<tr><td align='center' style='padding-right: 20px;'>H</td><td>This help</td></tr>"
+  "<tr><td align='center' style='padding-right: 20px;'>H</td><td>This help screen</td></tr>"
   "<tr><td align='center' style='padding-right: 20px;'>S</td><td>Snapshot</td></tr>"
   "<tr><td align='center' style='padding-right: 20px;'>C</td><td>Make a clip</td></tr>"
   "<tr><td align='center' style='padding-right: 20px;'>R</td><td>Start / stop recording</td></tr>"
