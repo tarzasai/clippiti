@@ -26,6 +26,7 @@ class ClipConfig:
   output_dir: Path
   ffmpeg_path: str = "ffmpeg"
   default_duration: int = 30
+  filename_format: str = "{author}.{timestamp}"
 
 
 @dataclass
@@ -110,7 +111,9 @@ class ClipService:
   def build_export_job(
     self,
     stage: ClipBufferStage,
-    stream_name: str,
+    stream_author: str,
+    stream_category: str,
+    stream_title: str,
     start_seconds: float,
     end_seconds: float,
   ) -> FfmpegJob:
@@ -123,7 +126,11 @@ class ClipService:
     if not selected:
       raise RuntimeError("No segments available for the requested clip range")
 
-    output_path = self._build_output_path(stream_name)
+    output_path = self._build_output_path(
+      stream_author,
+      stream_category,
+      stream_title,
+    )
     clip_seconds = end - start
 
     return FfmpegJob(
@@ -240,12 +247,31 @@ class ClipService:
         return None
     return output_path
 
-  def _build_output_path(self, stream_name: str) -> Path:
+  def _build_output_path(
+    self,
+    stream_author: str,
+    stream_category: str,
+    stream_title: str,
+  ) -> Path:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    safe_name = re.sub(r"[^\w\-.]", "_", stream_name)
-    output_dir = self._config.output_dir.expanduser() / safe_name
+    try:
+      name = self._config.filename_format.format(
+        author=stream_author,
+        category=stream_category,
+        title=stream_title,
+        timestamp=ts,
+      )
+    except Exception:
+      name = f"{stream_author}.{ts}"
+
+    safe_name = re.sub(r"[^\w\-.]", "_", name).strip("._")
+    if not safe_name:
+      safe_name = f"clip_{ts}"
+
+    stream_dir = re.sub(r"[^\w\-.]", "_", stream_author).strip("._") or "stream"
+    output_dir = self._config.output_dir.expanduser() / stream_dir
     output_dir.mkdir(parents=True, exist_ok=True)
-    return output_dir / f"{safe_name}_{ts}.mp4"
+    return output_dir / f"{safe_name}.mp4"
 
   @staticmethod
   def _write_playlist_entries(playlist_path: Path, segments: list[tuple[Path, float]]) -> None:

@@ -9,6 +9,7 @@ import threading
 import shutil
 import importlib.util
 from importlib.metadata import version, PackageNotFoundError
+from typing import TYPE_CHECKING
 
 os.environ.setdefault('QT_QPA_ORG_NAME', 'Clippiti')
 os.environ.setdefault('QT_QPA_APPLICATION_NAME', 'Clippiti')
@@ -30,6 +31,10 @@ from .services.mpv_args import build_mpv_options
 from .services.clipper import ClipConfig
 from .services.recording import RecordingConfig
 from .ui.app import run_app
+
+if TYPE_CHECKING:
+  from .services.buffer_engine import SessionRuntime
+  from .ui.app import MainWindow
 
 # Determine version: prefer installed distribution metadata, fallback to package __version__
 try:
@@ -115,7 +120,7 @@ def log_startup_diagnostics(log: logging.Logger, ffmpeg_path: str) -> None:
 def main(argv: list[str] | None = None) -> int:
   args = parse_args(argv)
   log = configure_logging(args.verbose)
-  runtime = None
+  runtime: SessionRuntime | None = None
   diagnostics_logged = False
 
   log.info("clippiti version %s", dist_ver)
@@ -177,7 +182,7 @@ def main(argv: list[str] | None = None) -> int:
     metadata.title,
   )
 
-  window_title = f"{metadata.author} - {metadata.category} - {metadata.title} - clippiti"
+  window_title = f"{metadata.author} - {metadata.title} - {metadata.category} - [{metadata.plugin}] - clippiti"
 
   startup_cancel = threading.Event()
 
@@ -194,7 +199,7 @@ def main(argv: list[str] | None = None) -> int:
       cancel_event=startup_cancel,
     )
 
-  def handle_runtime_ready(window, ready_runtime) -> None:
+  def handle_runtime_ready(window: MainWindow, ready_runtime: SessionRuntime) -> None:
     nonlocal runtime
     runtime = ready_runtime
     log.info("status: %s", runtime.status)
@@ -227,6 +232,7 @@ def main(argv: list[str] | None = None) -> int:
     output_dir=Path(str(config["clip"]["dir"])).expanduser(),
     ffmpeg_path=ffmpeg_path,
     default_duration=int(config["clip"].get("default_duration", 30)),
+    filename_format=str(config["clip"].get("filename_format", "{author}.{timestamp}")),
   )
 
   try:

@@ -8,6 +8,7 @@ def test_normalize_config_handles_invalid_input() -> None:
 
   assert config["general"]["ffmpeg_path"] == "ffmpeg"
   assert config["clip"]["default_duration"] == 10
+  assert config["clip"]["filename_format"] == "{author}.{timestamp}"
 
 
 def test_normalize_config_clamps_controls_fields_and_section_defaults() -> None:

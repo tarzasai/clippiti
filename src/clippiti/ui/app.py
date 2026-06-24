@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 import logging
 from copy import deepcopy
+from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QObject, QThread, QTimer, Qt, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QIcon, QKeyEvent, QResizeEvent
@@ -22,6 +23,9 @@ from ..model.config import ensure_output_dirs, normalize_config, save_config
 from ..services.clipper import ClipConfig, ClipService
 from ..services.recording import AsyncRecordingService, RecordingConfig
 from ..services.remux_queue import FfmpegJobResult, RemuxJob, RemuxQueueService
+
+if TYPE_CHECKING:
+  from ..services.buffer_engine import SessionRuntime
 
 log = logging.getLogger("clippiti")
 
@@ -100,7 +104,7 @@ class MainWindow(QMainWindow):
     self._clip_workflow: ClipWorkflow | None = None
     self._recording_cfg = recording_cfg
     self._snapshot_dir = Path.home() / "Pictures" / "Clippiti" / "snapshots"
-    self._snapshot_filename_format = "{name}_{timestamp}"
+    self._snapshot_filename_format = "{author}.{timestamp}"
     self._stop_in_progress = False
     self._stop_cfg: RecordingConfig | None = None
     self._offline_close_pending = False
@@ -163,7 +167,7 @@ class MainWindow(QMainWindow):
     self._apply_audio_state()
     self.osd.clear_message()
 
-  def set_runtime(self, runtime) -> None:
+  def set_runtime(self, runtime: SessionRuntime) -> None:
     self._runtime = runtime
     self._offline_close_pending = False
     if not self._pipeline_watch_timer.isActive():
@@ -271,10 +275,9 @@ class MainWindow(QMainWindow):
         category=category,
         title=title,
         timestamp=ts,
-        name=author,
       )
     except Exception:
-      base_name = f"{author}_{ts}"
+      base_name = f"{author}.{ts}"
     safe_name = self._safe_filename(base_name) or f"snapshot_{ts}"
     target = self._snapshot_dir / f"{safe_name}.png"
     if not self.video.request_snapshot(str(target)):
@@ -498,7 +501,7 @@ class MainWindow(QMainWindow):
 
     self._recording_cfg = RecordingConfig(
       output_dir=Path(str(recording.get("dir", "~/Videos/Clippiti/recordings"))).expanduser(),
-      filename_format=str(recording.get("filename_format", "{author}_{timestamp}")),
+      filename_format=str(recording.get("filename_format", "{author}.{timestamp}")),
       ffmpeg_path=ffmpeg_path,
       auto_remux_to_mp4=bool(recording.get("auto_remux_to_mp4", False)),
     )
@@ -507,12 +510,13 @@ class MainWindow(QMainWindow):
       output_dir=Path(str(clip.get("dir", "~/Videos/Clippiti/clips"))).expanduser(),
       ffmpeg_path=ffmpeg_path,
       default_duration=int(clip.get("default_duration", 30)),
+      filename_format=str(clip.get("filename_format", "{author}.{timestamp}")),
     )
     self._clip_service = ClipService(self._clip_cfg)
     self._rebuild_clip_workflow()
 
     self._snapshot_dir = Path(str(snapshot.get("dir", "~/Pictures/Clippiti/snapshots"))).expanduser()
-    self._snapshot_filename_format = str(snapshot.get("filename_format", "{name}_{timestamp}"))
+    self._snapshot_filename_format = str(snapshot.get("filename_format", "{author}.{timestamp}"))
 
     self.strip.set_trigger_radius(int(general.get("controls_area", 300)))
     self.strip.set_position(str(general.get("controls_position", "bottom-right-vertical")))

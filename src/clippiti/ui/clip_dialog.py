@@ -149,14 +149,15 @@ class _RangeSlider(QWidget):
 class ClipRangeDialog(QDialog):
   MIN_DURATION = 5
 
-  def __init__(self, parent=None):
+  def __init__(self, stream_author: str, stream_category: str, parent=None):
     super().__init__(parent)
-    self.setWindowTitle("Clip range")
-    self.resize(800, 600)
+    self.setWindowTitle(f"Clipping: {stream_author} - {stream_category}")
+    self.resize(1000, 500)
     self._start_preview_image: Path | None = None
     self._end_preview_image: Path | None = None
     self._video_source_path: Path | None = None
     self._video_visible = False
+    self._pending_preview_start_ms: int | None = None
 
     self._duration_label = QLabel("")
     self._start_label = QLabel("Start: 0s")
@@ -210,6 +211,7 @@ class ClipRangeDialog(QDialog):
     self._player.setVideoOutput(self._video_widget)
     self._audio_output.setVolume(0.5)
     self._player.positionChanged.connect(self._loop_selection_if_needed)
+    self._player.mediaStatusChanged.connect(self._on_media_status_changed)
 
     self._content_stack = QStackedLayout()
     self._content_stack.setContentsMargins(0, 0, 0, 0)
@@ -292,6 +294,11 @@ class ClipRangeDialog(QDialog):
     self._set_preview(self._start_preview, self._start_preview_image, "Start preview unavailable")
     self._set_preview(self._end_preview, self._end_preview_image, "End preview unavailable")
 
+  def showEvent(self, event) -> None:
+    super().showEvent(event)
+    self._set_preview(self._start_preview, self._start_preview_image, "Start preview unavailable")
+    self._set_preview(self._end_preview, self._end_preview_image, "End preview unavailable")
+
   def _set_preview(self, label: QLabel, image_path: Path | None, fallback_text: str) -> None:
     if image_path is None or not image_path.exists():
       label.setPixmap(QPixmap())
@@ -320,7 +327,9 @@ class ClipRangeDialog(QDialog):
 
   def _seek_to_start(self) -> None:
     start, _ = self._range_slider.values()
-    self._player.setPosition(int(start * 1000))
+    start_ms = int(start * 1000)
+    self._pending_preview_start_ms = start_ms
+    self._player.setPosition(start_ms)
 
   def _toggle_video_preview(self) -> None:
     self._video_visible = not self._video_visible
@@ -334,6 +343,7 @@ class ClipRangeDialog(QDialog):
     else:
       self._content_stack.setCurrentWidget(self._selection_widget)
       self._toggle_video_button.setText("Show video preview")
+      self._pending_preview_start_ms = None
       self._player.pause()
 
   def _load_video_source(self, video_path: Path) -> None:
@@ -345,9 +355,20 @@ class ClipRangeDialog(QDialog):
     self._player.setSource(QUrl.fromLocalFile(target_source))
 
   def done(self, result: int) -> None:
+    self._pending_preview_start_ms = None
     self._player.stop()
     self._player.setSource(QUrl())
     super().done(result)
+
+  def _on_media_status_changed(self, status: QMediaPlayer.MediaStatus) -> None:
+    if self._pending_preview_start_ms is None:
+      return
+    if status not in {
+      QMediaPlayer.MediaStatus.LoadedMedia,
+      QMediaPlayer.MediaStatus.BufferedMedia,
+    }:
+      return
+    self._player.setPosition(self._pending_preview_start_ms)
 
   def _loop_selection_if_needed(self, position_ms: int) -> None:
     if not self._video_visible:
@@ -400,7 +421,9 @@ class ClipWorkflow(QObject):
       end_seconds = total_seconds
       start_seconds = max(0, end_seconds - int(self._clip_cfg.default_duration))
 
-      dialog = ClipRangeDialog(parent_widget)
+      stream_author = str(getattr(runtime, "stream_author", "stream"))
+      stream_category = str(getattr(runtime, "stream_category", "unknown"))
+      dialog = ClipRangeDialog(stream_author, stream_category, parent_widget)
       dialog.set_timeline_max(total_seconds)
       dialog.set_selected_range(start_seconds, end_seconds)
       dialog.set_video_source(stage.merged_ts_path)
@@ -429,9 +452,13 @@ class ClipWorkflow(QObject):
 
       start_selected, end_selected = dialog.selected_range()
       stream_author = str(getattr(runtime, "stream_author", "stream"))
+      stream_category = str(getattr(runtime, "stream_category", "unknown"))
+      stream_title = str(getattr(runtime, "stream_title", "untitled"))
       job = self._clip_service.build_export_job(
         stage,
         stream_author,
+        stream_category,
+        stream_title,
         float(start_selected),
         float(end_selected),
       )

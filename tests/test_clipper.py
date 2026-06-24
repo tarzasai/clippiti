@@ -142,7 +142,7 @@ from clippiti.services.clipper import ClipService
 
 def test_build_output_path_sanitizes_stream_name(tmp_path: Path) -> None:
   service = ClipService(ClipConfig(output_dir=tmp_path))
-  out = service._build_output_path("Bad:/Name")
+  out = service._build_output_path("Bad:/Name", "Category", "Title")
   assert out.suffix == ".mp4"
   assert "Bad__Name" in str(out)
 
@@ -157,7 +157,7 @@ def test_build_export_job_rejects_invalid_range(tmp_path: Path) -> None:
     merged_ts_path=tmp_path / "merged.ts",
   )
   try:
-    service.build_export_job(stage, "name", 1.0, 0.5)
+    service.build_export_job(stage, "name", "category", "title", 1.0, 0.5)
     assert False
   except RuntimeError as exc:
     assert "Invalid clip range" in str(exc)
@@ -172,11 +172,23 @@ def test_build_export_job_creates_job(tmp_path: Path) -> None:
     total_seconds=5.0,
     merged_ts_path=tmp_path / "merged.ts",
   )
-  job = service.build_export_job(stage, "name", 0.5, 3.0)
+  job = service.build_export_job(stage, "name", "category", "title", 0.5, 3.0)
 
   assert job.ffmpeg_path == "ffmpeg"
   assert job.kind == "clip"
   assert job.target_path.suffix == ".mp4"
+
+
+def test_build_output_path_uses_filename_format(tmp_path: Path) -> None:
+  service = ClipService(
+    ClipConfig(
+      output_dir=tmp_path,
+      filename_format="{category}.{title}.{timestamp}",
+    )
+  )
+  out = service._build_output_path("Author", "Cat Name", "My/Title")
+  assert out.suffix == ".mp4"
+  assert "Cat_Name.My_Title." in out.name
 
 
 def test_write_playlist_entries(tmp_path: Path) -> None:

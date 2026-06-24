@@ -59,7 +59,6 @@ class RecordingService:
       category=runtime.stream_category,
       title=runtime.stream_title,
       timestamp=timestamp,
-      name=runtime.stream_author,
     )
     safe_name = _safe_filename(name)
     ts_path = cfg.output_dir / f"{safe_name}.ts"

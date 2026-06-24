@@ -111,14 +111,15 @@ class SettingsDialog(QDialog):
       general["mpv_options"] = loaded
 
     recording["dir"] = self._recording_dir_input.text().strip() or str(recording.get("dir", ""))
-    recording["filename_format"] = self._recording_filename_input.text().strip() or "{author}_{timestamp}"
+    recording["filename_format"] = self._recording_filename_input.text().strip() or "{author}.{timestamp}"
     recording["auto_remux_to_mp4"] = self._recording_remux_input.isChecked()
 
     clip["dir"] = self._clip_dir_input.text().strip() or str(clip.get("dir", ""))
     clip["default_duration"] = int(self._clip_duration_input.value())
+    clip["filename_format"] = self._clip_filename_input.text().strip() or "{author}.{timestamp}"
 
     snapshot["dir"] = self._snapshot_dir_input.text().strip() or str(snapshot.get("dir", ""))
-    snapshot["filename_format"] = self._snapshot_filename_input.text().strip() or "{name}_{timestamp}"
+    snapshot["filename_format"] = self._snapshot_filename_input.text().strip() or "{author}.{timestamp}"
 
     return normalize_config(self._source)
 
@@ -249,10 +250,14 @@ class SettingsDialog(QDialog):
     clip = self._source["clip"]
     snapshot = self._source["snapshot"]
 
+    filename_hint = QLineEdit("{author}, {category}, {title}, {timestamp}", tab)
+    filename_hint.setReadOnly(True)
+    layout.addRow("Filename variables", filename_hint)
+
     # Recording
     self._recording_dir_input = QLineEdit(str(recording.get("dir", "")), tab)
     self._recording_filename_input = QLineEdit(
-      str(recording.get("filename_format", "{author}_{timestamp}")),
+      str(recording.get("filename_format", "{author}.{timestamp}")),
       tab,
     )
     self._recording_remux_input = QCheckBox("Auto remux the .ts file when the recording is finished", tab)
@@ -268,15 +273,20 @@ class SettingsDialog(QDialog):
     self._clip_duration_input = QSpinBox(tab)
     self._clip_duration_input.setRange(5, 600)
     self._clip_duration_input.setValue(int(clip.get("default_duration", 30)))
+    self._clip_filename_input = QLineEdit(
+      str(clip.get("filename_format", "{author}.{timestamp}")),
+      tab,
+    )
 
     layout.addRow("", self._build_section_label("Clip", tab))
     layout.addRow("output dir", self._build_directory_row(self._clip_dir_input, "Select clip output folder"))
+    layout.addRow("filename format", self._clip_filename_input)
     layout.addRow("default duration (s)", self._clip_duration_input)
 
     # Snapshot
     self._snapshot_dir_input = QLineEdit(str(snapshot.get("dir", "")), tab)
     self._snapshot_filename_input = QLineEdit(
-      str(snapshot.get("filename_format", "{name}_{timestamp}")),
+      str(snapshot.get("filename_format", "{author}.{timestamp}")),
       tab,
     )
 

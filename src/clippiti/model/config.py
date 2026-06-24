@@ -21,14 +21,15 @@ DEFAULT_CONFIG: dict[str, object] = {
   "clip": {
     "dir": "~/Videos/Clippiti/clips",
     "default_duration": 10,
+    "filename_format": "{author}.{timestamp}",
   },
   "snapshot": {
     "dir": "~/Pictures/Clippiti/snapshots",
-    "filename_format": "{name}_{timestamp}",
+    "filename_format": "{author}.{timestamp}",
   },
   "recording": {
     "dir": "~/Videos/Clippiti/recordings",
-    "filename_format": "{name}_{timestamp}",
+    "filename_format": "{author}.{timestamp}",
     "auto_remux_to_mp4": False,
   },
   "streamlink": {
