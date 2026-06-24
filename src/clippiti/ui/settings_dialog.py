@@ -1,7 +1,9 @@
 """Configuration dialog for editing runtime and startup settings."""
 
 from copy import deepcopy
+from importlib.metadata import version, PackageNotFoundError
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
   QCheckBox,
   QComboBox,
@@ -22,6 +24,13 @@ from PyQt6.QtWidgets import (
 import yaml
 
 from ..model.config import normalize_config
+
+# Determine version: prefer installed distribution metadata, fallback to package __version__
+try:
+  dist_ver = version('clippiti')
+except PackageNotFoundError:
+  import clippiti
+  dist_ver = getattr(clippiti, '__version__', 'dev')
 
 
 class SettingsDialog(QDialog):
@@ -47,6 +56,7 @@ class SettingsDialog(QDialog):
     tabs = QTabWidget(self)
     tabs.addTab(self._build_general_tab(), "General")
     tabs.addTab(self._build_actions_tab(), "Actions")
+    tabs.addTab(self._build_about_tab(), "About")
 
     restart_hint = QLabel("(*) requires relaunch")
     restart_hint.setWordWrap(False)
@@ -275,6 +285,33 @@ class SettingsDialog(QDialog):
     layout.addRow("filename format", self._snapshot_filename_input)
     return tab
 
+  def _build_about_tab(self) -> QWidget:
+    widget = QWidget()
+    layout = QVBoxLayout()
+    layout.addStretch(1)
+    title = QLabel('<h1>Clippiti</h1>')
+    title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    layout.addWidget(title)
+    description = QLabel('<h4>A livestream player with clipping and recording capabilities.</h4>')
+    description.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    description.setWordWrap(True)
+    layout.addWidget(description)
+    version = QLabel(f'<p>Version {dist_ver}</p>')
+    version.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    layout.addWidget(version)
+    links = QLabel(
+      '<p><a href="https://github.com/tarzasai/Clippiti">GitHub Repository</a></p>'
+      '<p><a href="https://github.com/tarzasai/Clippiti/wiki">Documentation</a></p>'
+    )
+    links.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    links.setOpenExternalLinks(True)
+    layout.addWidget(links)
+    copyright_text = QLabel('<p>© 2026 Tarzasai</p>')
+    copyright_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    layout.addWidget(copyright_text)
+    layout.addStretch(2)
+    widget.setLayout(layout)
+    return widget
 
   def _build_directory_row(self, line_edit: QLineEdit, title: str) -> QHBoxLayout:
     row_layout = QHBoxLayout()

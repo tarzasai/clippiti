@@ -110,6 +110,12 @@ def main(argv: list[str] | None = None) -> int:
   runtime = None
   diagnostics_logged = False
 
+  try:
+    from ._version import __version__
+  except ImportError:
+    __version__ = "unknown"
+  log.info("clippiti version %s", __version__)
+
   workdir = resolve_workdir(args.workdir)
   workdir.mkdir(parents=True, exist_ok=True)
 
