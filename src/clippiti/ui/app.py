@@ -56,9 +56,13 @@ _HELP_TEXT = (
   "<code><b>C</b></code> - Clip dialog<br>"
   "<code><b>R</b></code> - Start / stop recording<br>"
   "<code><b>M</b></code> - Mute / Unmute<br>"
+  "<code><b>O</b></code> - Rotate video +90\N{DEGREE SIGN} clockwise<br>"
+  "<code><b>F</b></code> - Flip video horizontally<br>"
   "<code><b>P</b></code> - Pin / Unpin toolbar<br>"
-  "<code><b>T</b></code> - Next toolbar position (<code><b>Shift+T</b></code> Previous)<br>"
-  "<code><b>-/+</b></code> &nbsp; <code><b>PgDn/PgUp</b></code> &nbsp; <code><b>Wheel</b></code> - Volume"
+  "<code><b>T</b></code> - Next toolbar position (<code><b>Shift+T</b></code> to go back)<br>"
+  "<br>"
+  "Volume setting:<br>"
+  "<code><b>-/+</b></code>, <code><b>PgDn/PgUp</b></code> or <code><b>Mouse Wheel</b></code>"
 )
 
 ICON_PATH = Path(__file__).parent.parent / "resources" / "icons" / "app-icon.png"
@@ -100,6 +104,7 @@ class MainWindow(QMainWindow):
     self._stop_cfg: RecordingConfig | None = None
     self._offline_close_pending = False
     self.video = VideoSurface(media_source, mpv_options)
+    self.video.snapshot_completed.connect(self._on_snapshot_completed)
     self.setCentralWidget(self.video)
 
     self.osd = OsdOverlay(self.video)
@@ -213,6 +218,8 @@ class MainWindow(QMainWindow):
     self.strip.record_action.triggered.connect(self._toggle_recording)
     self.strip.clip_action.triggered.connect(self._clip_action)
     self.strip.snapshot_action.triggered.connect(self._snapshot_action)
+    self.strip.rotate_action.triggered.connect(self._rotate_action)
+    self.strip.flip_action.triggered.connect(self._flip_action)
     self.strip.move_action.triggered.connect(self._move_toolbar_action)
     self.strip.settings_action.triggered.connect(self._settings_action)
 
@@ -250,7 +257,7 @@ class MainWindow(QMainWindow):
     self.osd.show_message(self._volume_osd_title())
 
   def _snapshot_action(self) -> None:
-    if self.video.render_ctx is None:
+    if self.video.player is None:
       return
     self._snapshot_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -269,10 +276,32 @@ class MainWindow(QMainWindow):
       base_name = f"{author}_{ts}"
     safe_name = self._safe_filename(base_name) or f"snapshot_{ts}"
     target = self._snapshot_dir / f"{safe_name}.png"
+    if not self.video.request_snapshot(str(target)):
+      self.osd.show_message("Snapshot", "Failed to queue")
 
-    image = self.video.grabFramebuffer()
-    if not image.isNull() and image.save(str(target), "PNG"):
-      self.osd.show_message("snapshot saved")
+  @pyqtSlot(str, bool, str)
+  def _on_snapshot_completed(self, target_path: str, success: bool, error: str) -> None:
+    if success:
+      self.osd.show_message("Snapshot saved", Path(target_path).name)
+      return
+    detail = error.strip() if error else "save failed"
+    self.osd.show_message("Snapshot", detail)
+
+  def _rotate_action(self) -> None:
+    if self.video.player is None:
+      self.osd.show_message("Rotate", "Player not ready yet")
+      return
+    rotation = self.video.rotate_clockwise()
+    self.osd.show_message("Rotate", f"{rotation}\N{DEGREE SIGN}")
+
+  def _flip_action(self) -> None:
+    if self.video.player is None:
+      self.osd.show_message("Flip", "Player not ready yet")
+      return
+    if self.video.toggle_flip_horizontal():
+      self.osd.show_message("Flip", "Toggled")
+    else:
+      self.osd.show_message("Flip", "Failed")
 
   def _move_toolbar_action(self) -> None:
     mods = QApplication.keyboardModifiers()
@@ -485,6 +514,7 @@ class MainWindow(QMainWindow):
     self._snapshot_filename_format = str(snapshot.get("filename_format", "{name}_{timestamp}"))
 
     self.strip.set_trigger_radius(int(general.get("controls_area", 300)))
+    self.strip.set_position(str(general.get("controls_position", "bottom-right-vertical")))
     self._reposition_timer.setInterval(max(0, int(general.get("controls_resize_debounce_ms", 40))))
 
     self._config = normalized

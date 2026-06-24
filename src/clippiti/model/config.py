@@ -13,7 +13,10 @@ DEFAULT_CONFIG: dict[str, object] = {
     "window_segments": 12,
     "controls_area": 500,
     "controls_resize_debounce_ms": 40,
-    "mpv_options": {},
+    "controls_position": "bottom-right-vertical",
+    "mpv_options": {
+      "hwdec": "auto-safe",
+    },
   },
   "clip": {
     "dir": "~/Videos/Clippiti/clips",
@@ -63,8 +66,25 @@ def normalize_config(raw: object) -> dict[str, object]:
   except (TypeError, ValueError):
     debounce_ms = 40
 
+  controls_position = str(
+    general.get("controls_position", DEFAULT_CONFIG["general"]["controls_position"])
+  )
+  valid_positions = {
+    "top-right-horizontal",
+    "top-right-vertical",
+    "bottom-right-horizontal",
+    "bottom-right-vertical",
+    "bottom-left-vertical",
+    "bottom-left-horizontal",
+    "top-left-horizontal",
+    "top-left-vertical",
+  }
+  if controls_position not in valid_positions:
+    controls_position = str(DEFAULT_CONFIG["general"]["controls_position"])
+
   general["controls_area"] = max(50, controls_area)
   general["controls_resize_debounce_ms"] = max(0, debounce_ms)
+  general["controls_position"] = controls_position
 
   mpv_options = general.get("mpv_options", {})
   if not isinstance(mpv_options, dict):

@@ -1,7 +1,7 @@
 """Floating control strip widget for player controls."""
 
 from PyQt6.QtCore import QEasingCurve, QEvent, QPoint, QPropertyAnimation, QRect, QSize, QTimer, Qt
-from PyQt6.QtGui import QIcon
+from PyQt6.QtGui import QIcon, QKeySequence
 from PyQt6.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QToolBar, QWidget
 
 
@@ -10,9 +10,10 @@ class ControlStrip(QFrame):
   ICON_SIZE = 28
   MARGIN = 12
   ANIM_MS = 180
-  TOTAL = 6
+  TOTAL = 8
   TRIGGER_PAD = 12
   COLLAPSE_DELAY_MS = 150
+  DEFAULT_POSITION = "bottom-right-vertical"
 
   STATES: list[tuple[str, str]] = [
     ("right", "top"),
@@ -24,6 +25,16 @@ class ControlStrip(QFrame):
     ("left", "top"),
     ("top", "left"),
   ]
+  POSITION_INDEX_BY_NAME: dict[str, int] = {
+    "top-right-horizontal": 0,
+    "top-right-vertical": 1,
+    "bottom-right-horizontal": 2,
+    "bottom-right-vertical": 3,
+    "bottom-left-vertical": 4,
+    "bottom-left-horizontal": 5,
+    "top-left-horizontal": 6,
+    "top-left-vertical": 7,
+  }
 
   def __init__(
     self,
@@ -62,6 +73,16 @@ class ControlStrip(QFrame):
       QIcon.fromTheme("screenshot-app-symbolic"),
       "Snapshot"
     )
+    self.rotate_action = self._toolbar.addAction(
+      QIcon.fromTheme("object-rotate-right-symbolic"),
+      "Rotate +90°"
+    )
+    self.rotate_action.setShortcut(QKeySequence("O"))
+    self.flip_action = self._toolbar.addAction(
+      QIcon.fromTheme("object-flip-horizontal-symbolic"),
+      "Flip horizontally"
+    )
+    self.flip_action.setShortcut(QKeySequence("F"))
     self.move_action = self._toolbar.addAction(
       QIcon.fromTheme("object-move-symbolic"),
       "Move panel (Ctrl+Click: reverse)"
@@ -77,6 +98,8 @@ class ControlStrip(QFrame):
       self.record_action,
       self.clip_action,
       self.snapshot_action,
+      self.rotate_action,
+      self.flip_action,
       self.move_action,
       self.settings_action,
     ]
@@ -299,6 +322,16 @@ class ControlStrip(QFrame):
 
   def set_trigger_radius(self, trigger_radius: int) -> None:
     self._trigger_radius = max(50, int(trigger_radius))
+
+  def set_position(self, position_name: str) -> None:
+    self._anim.stop()
+    self._state_idx = self.POSITION_INDEX_BY_NAME.get(
+      str(position_name),
+      self.POSITION_INDEX_BY_NAME[self.DEFAULT_POSITION],
+    )
+    self._place_buttons()
+    self.move(self._expanded_pos() if self._hovering else self._collapsed_pos())
+    self.raise_()
 
   def toggle_pin(self) -> bool:
     """Toggle pinned state. Returns new pinned state."""

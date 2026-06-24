@@ -5,7 +5,7 @@ import logging
 from PyQt6.QtCore import QEvent, QTimer, Qt
 from PyQt6.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget, QSizePolicy
 
-log = logging.getLogger("clippiti.ui.osd")
+log = logging.getLogger("clippiti")
 
 
 class OsdOverlay(QFrame):

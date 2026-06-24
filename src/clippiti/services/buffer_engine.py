@@ -15,7 +15,7 @@ import ctypes
 from .streamlink_args import build_streamlink_metadata_command
 
 
-log = logging.getLogger("clippiti.services.buffer_engine")
+log = logging.getLogger("clippiti")
 
 
 @dataclass
@@ -60,7 +60,7 @@ def _linux_parent_death_preexec() -> None:
     log.debug("configured PR_SET_PDEATHSIG for child process")
   except Exception:
     # Best effort only.
-    log.debug("failed to configure PR_SET_PDEATHSIG", exc_info=True)
+    log.debug("buffer_engine: failed to configure PR_SET_PDEATHSIG", exc_info=True)
     return
 
 
@@ -74,7 +74,7 @@ def _child_process_kwargs() -> dict[str, object]:
   if threading.current_thread() is threading.main_thread():
     kwargs["preexec_fn"] = _linux_parent_death_preexec
   else:
-    log.debug("skipping preexec_fn in non-main thread for subprocess safety")
+    log.debug("buffer_engine: skipping preexec_fn in non-main thread for subprocess safety")
   return kwargs
 
 
@@ -93,8 +93,8 @@ def _stderr_target(stderr_path: Path | None):
 
 def resolve_stream_metadata(url: str, default_args: str, cli_args: str, timeout_s: int = 25) -> StreamMetadata:
   cmd = build_streamlink_metadata_command(url, default_args, cli_args)
-  log.debug("metadata command built: %s", cmd)
-  log.debug("running metadata probe with timeout=%ss", max(1, timeout_s))
+  log.debug("buffer_engine: metadata command built: %s", cmd)
+  log.debug("buffer_engine: running metadata probe with timeout=%ss", max(1, timeout_s))
   proc = subprocess.run(
     cmd,
     check=False,
@@ -102,11 +102,11 @@ def resolve_stream_metadata(url: str, default_args: str, cli_args: str, timeout_
     text=True,
     timeout=max(1, timeout_s),
   )
-  log.debug("metadata probe exit code: %s", proc.returncode)
+  log.debug("buffer_engine: metadata probe exit code: %s", proc.returncode)
 
   if proc.returncode != 0:
     err = (proc.stderr or proc.stdout or "streamlink metadata probe failed").strip()
-    log.debug("metadata probe failure output: %s", err)
+    log.debug("buffer_engine: metadata probe failure output: %s", err)
     raise RuntimeError(err)
 
   try:
@@ -127,7 +127,7 @@ def resolve_stream_metadata(url: str, default_args: str, cli_args: str, timeout_
   title = str(meta.get("title", url) or url)
 
   log.debug(
-    "metadata resolved: plugin=%s author=%s category=%s title=%s",
+    "buffer_engine: metadata resolved: plugin=%s author=%s category=%s title=%s",
     plugin,
     author,
     category,
@@ -187,12 +187,12 @@ def start_single_session_pipeline(
     str(playlist_path),
   ]
 
-  log.debug("starting pipeline session_id=%s segment_dir=%s", session_id, segment_dir)
-  log.debug("pipeline streamlink command built: %s", streamlink_cmd)
-  log.debug("ffmpeg command built: %s", ffmpeg_cmd)
+  log.debug("buffer_engine: starting pipeline session_id=%s segment_dir=%s", session_id, segment_dir)
+  log.debug("buffer_engine: pipeline streamlink command built: %s", streamlink_cmd)
+  log.debug("buffer_engine: ffmpeg command built: %s", ffmpeg_cmd)
 
   if cancel_event is not None and cancel_event.is_set():
-    log.debug("pipeline startup cancelled before process launch")
+    log.debug("buffer_engine: pipeline startup cancelled before process launch")
     shutil.rmtree(segment_dir, ignore_errors=True)
     raise RuntimeError("buffer pipeline startup cancelled")
 
@@ -209,7 +209,7 @@ def start_single_session_pipeline(
     )
     if streamlink_proc.stdout is None:
       raise RuntimeError("failed to capture streamlink stdout")
-    log.debug("streamlink process started pid=%s", streamlink_proc.pid)
+    log.debug("buffer_engine: streamlink process started pid=%s", streamlink_proc.pid)
 
     ffmpeg_proc = subprocess.Popen(
       ffmpeg_cmd,
@@ -218,7 +218,7 @@ def start_single_session_pipeline(
       stderr=ffmpeg_stderr_target,
       **child_kwargs,
     )
-    log.debug("ffmpeg process started pid=%s", ffmpeg_proc.pid)
+    log.debug("buffer_engine: ffmpeg process started pid=%s", ffmpeg_proc.pid)
     streamlink_proc.stdout.close()
   finally:
     if streamlink_stderr_fp is not None:
@@ -245,66 +245,66 @@ def start_single_session_pipeline(
   )
 
   deadline = time.monotonic() + max(1, startup_timeout_s)
-  log.debug("waiting for playlist readiness timeout=%ss path=%s", max(1, startup_timeout_s), playlist_path)
+  log.debug("buffer_engine: waiting for playlist readiness timeout=%ss path=%s", max(1, startup_timeout_s), playlist_path)
   while time.monotonic() < deadline:
     if cancel_event is not None and cancel_event.is_set():
-      log.debug("pipeline startup cancelled while waiting for playlist readiness")
+      log.debug("buffer_engine: pipeline startup cancelled while waiting for playlist readiness")
       terminate_runtime(runtime)
       cleanup_runtime_artifacts(runtime)
       raise RuntimeError("buffer pipeline startup cancelled")
     if playlist_path.exists() and playlist_path.stat().st_size > 0:
       runtime.status = "live"
-      log.debug("playlist became available size=%s", playlist_path.stat().st_size)
+      log.debug("buffer_engine: playlist became available size=%s", playlist_path.stat().st_size)
       return runtime
     if streamlink_proc.poll() is not None:
       message = "streamlink exited before playlist became available"
-      log.debug("streamlink exited early code=%s", streamlink_proc.returncode)
+      log.debug("buffer_engine: streamlink exited early code=%s", streamlink_proc.returncode)
       raise RuntimeError(message)
     if ffmpeg_proc.poll() is not None:
-      log.debug("ffmpeg exited early code=%s", ffmpeg_proc.returncode)
+      log.debug("buffer_engine: ffmpeg exited early code=%s", ffmpeg_proc.returncode)
       raise RuntimeError("ffmpeg exited before playlist became available")
     time.sleep(0.15)
 
-  log.debug("playlist startup timed out path=%s", playlist_path)
+  log.debug("buffer_engine: playlist startup timed out path=%s", playlist_path)
   raise RuntimeError("buffer pipeline startup timed out before live.m3u8 became available")
 
 
 def terminate_runtime(runtime: SessionRuntime) -> None:
   procs = [runtime.ffmpeg_proc, runtime.streamlink_proc]
-  log.debug("terminating runtime for segment_dir=%s", runtime.segment_dir)
+  log.debug("buffer_engine: terminating runtime for segment_dir=%s", runtime.segment_dir)
 
   for proc in procs:
     if proc is None or proc.poll() is not None:
       continue
     try:
-      log.debug("sending terminate to pid=%s", proc.pid)
+      log.debug("buffer_engine: sending terminate to pid=%s", proc.pid)
       proc.terminate()
     except Exception:
-      log.debug("terminate failed for pid=%s", proc.pid, exc_info=True)
+      log.debug("buffer_engine: terminate failed for pid=%s", proc.pid, exc_info=True)
 
   for proc in procs:
     if proc is None:
       continue
     if proc.poll() is not None:
-      log.debug("process already exited pid=%s code=%s", proc.pid, proc.returncode)
+      log.debug("buffer_engine: process already exited pid=%s code=%s", proc.pid, proc.returncode)
       continue
     try:
       proc.wait(timeout=3.0)
-      log.debug("process exited after terminate pid=%s code=%s", proc.pid, proc.returncode)
+      log.debug("buffer_engine: process exited after terminate pid=%s code=%s", proc.pid, proc.returncode)
       continue
     except Exception:
-      log.debug("process did not exit after terminate pid=%s", proc.pid, exc_info=True)
+      log.debug("buffer_engine: process did not exit after terminate pid=%s", proc.pid, exc_info=True)
     try:
-      log.debug("sending kill to pid=%s", proc.pid)
+      log.debug("buffer_engine: sending kill to pid=%s", proc.pid)
       proc.kill()
     except Exception:
-      log.debug("kill failed for pid=%s", proc.pid, exc_info=True)
+      log.debug("buffer_engine: kill failed for pid=%s", proc.pid, exc_info=True)
     try:
       proc.wait(timeout=1.0)
     except Exception:
-      log.debug("process still did not exit after kill pid=%s", proc.pid, exc_info=True)
+      log.debug("buffer_engine: process still did not exit after kill pid=%s", proc.pid, exc_info=True)
     else:
-      log.debug("process exited after kill pid=%s code=%s", proc.pid, proc.returncode)
+      log.debug("buffer_engine: process exited after kill pid=%s code=%s", proc.pid, proc.returncode)
 
 
 def cleanup_runtime_artifacts(runtime: SessionRuntime) -> None:
@@ -312,9 +312,9 @@ def cleanup_runtime_artifacts(runtime: SessionRuntime) -> None:
   for attempt in range(6):
     shutil.rmtree(runtime.segment_dir, ignore_errors=True)
     if not runtime.segment_dir.exists():
-      log.debug("runtime artifacts removed attempt=%s dir=%s", attempt + 1, runtime.segment_dir)
+      log.debug("buffer_engine: runtime artifacts removed attempt=%s dir=%s", attempt + 1, runtime.segment_dir)
       break
-    log.debug("runtime artifacts still present attempt=%s dir=%s", attempt + 1, runtime.segment_dir)
+    log.debug("buffer_engine: runtime artifacts still present attempt=%s dir=%s", attempt + 1, runtime.segment_dir)
     time.sleep(0.1)
 
 
@@ -336,7 +336,7 @@ def cleanup_orphan_session_dirs(workdir: Path, current_pid: int | None = None) -
 
   active_pid = current_pid if current_pid is not None else os.getpid()
   removed = 0
-  log.debug("scanning orphan session dirs in %s active_pid=%s", sessions_root, active_pid)
+  log.debug("buffer_engine: scanning orphan session dirs in %s active_pid=%s", sessions_root, active_pid)
 
   for entry in sessions_root.iterdir():
     if not entry.is_dir():
@@ -351,16 +351,16 @@ def cleanup_orphan_session_dirs(workdir: Path, current_pid: int | None = None) -
         owner_pid = 0
 
     if owner_pid == active_pid:
-      log.debug("keeping session dir owned by current process: %s", entry)
+      log.debug("buffer_engine: keeping session dir owned by current process: %s", entry)
       continue
 
     if owner_pid > 0 and _pid_is_alive(owner_pid):
-      log.debug("keeping session dir with live owner pid=%s dir=%s", owner_pid, entry)
+      log.debug("buffer_engine: keeping session dir with live owner pid=%s dir=%s", owner_pid, entry)
       continue
 
     shutil.rmtree(entry, ignore_errors=True)
     removed += 1
-    log.debug("removed orphan session dir owner_pid=%s dir=%s", owner_pid, entry)
+    log.debug("buffer_engine: removed orphan session dir owner_pid=%s dir=%s", owner_pid, entry)
 
-  log.debug("orphan session cleanup removed=%s", removed)
+  log.debug("buffer_engine: orphan session cleanup removed=%s", removed)
   return removed

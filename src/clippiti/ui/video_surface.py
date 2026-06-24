@@ -10,7 +10,7 @@ from PyQt6.QtOpenGLWidgets import QOpenGLWidget
 
 import mpv
 
-log = logging.getLogger("clippiti.ui.video_surface")
+log = logging.getLogger("clippiti")
 
 # libmpv requires C numeric locale (decimal dot) and can crash otherwise.
 os.environ["LC_NUMERIC"] = "C"
@@ -19,7 +19,9 @@ locale.setlocale(locale.LC_NUMERIC, "C")
 
 class VideoSurface(QOpenGLWidget):
   frame_ready = pyqtSignal()
+  snapshot_completed = pyqtSignal(str, bool, str)
   DEFAULT_VOLUME = 70
+  ROTATION_STEP = 90
 
   def __init__(
     self,
@@ -39,6 +41,7 @@ class VideoSurface(QOpenGLWidget):
     self.player: mpv.MPV | None = None
     self.render_ctx: mpv.MpvRenderContext | None = None
     self._gl_proc_addr: mpv.MpvGlGetProcAddressFn | None = None
+    self._on_file_loaded_cb = None
     self.frame_ready.connect(self._maybe_paint_next_frame)
 
   @property
@@ -126,6 +129,7 @@ class VideoSurface(QOpenGLWidget):
     player_options["audio_client_name"] = "Clippiti"
 
     self.player = mpv.MPV(**player_options)
+    self._install_decoder_logging()
 
     self._gl_proc_addr = mpv.MpvGlGetProcAddressFn(self._get_proc_addr)
     self.render_ctx = mpv.MpvRenderContext(
@@ -138,6 +142,64 @@ class VideoSurface(QOpenGLWidget):
 
     if self._media_source:
       self._play_media_source(self._media_source)
+
+  def _install_decoder_logging(self) -> None:
+    if self.player is None:
+      return
+
+    try:
+      self.player.observe_property("hwdec-current", self._on_hwdec_current_changed)
+    except Exception:
+      log.exception("video: failed to observe hwdec-current")
+
+    try:
+      @self.player.event_callback("file-loaded")
+      def _on_file_loaded(_event) -> None:
+        self._log_decoder_status("file-loaded")
+
+      self._on_file_loaded_cb = _on_file_loaded
+    except Exception:
+      log.exception("video: failed to install file-loaded callback")
+
+  def _on_hwdec_current_changed(self, _name: str, value: object) -> None:
+    mode = str(value or "")
+    using_hw = mode not in {"", "no", "none"}
+    path = "GPU" if using_hw else "CPU"
+    log.info("video: decode path=%s hwdec-current=%s", path, mode or "none")
+
+  def _log_decoder_status(self, context: str) -> None:
+    if self.player is None:
+      return
+
+    hwdec_current = "unknown"
+    video_codec = "unknown"
+    decoder_desc = "unknown"
+
+    try:
+      hwdec_current = str(getattr(self.player, "hwdec_current", "") or "none")
+    except Exception:
+      pass
+
+    try:
+      video_codec = str(getattr(self.player, "video_codec", "") or "unknown")
+    except Exception:
+      pass
+
+    try:
+      decoder_desc = str(getattr(self.player, "decoder_desc", "") or "unknown")
+    except Exception:
+      pass
+
+    using_hw = hwdec_current not in {"", "no", "none", "unknown"}
+    path = "GPU" if using_hw else "CPU"
+    log.info(
+      "video: %s decode path=%s hwdec-current=%s codec=%s decoder=%s",
+      context,
+      path,
+      hwdec_current,
+      video_codec,
+      decoder_desc,
+    )
 
   def set_media_source(self, media_source: str) -> None:
     self._media_source = media_source
@@ -156,6 +218,63 @@ class VideoSurface(QOpenGLWidget):
     except Exception:
       # Keep app shell alive even if media cannot be opened yet.
       log.exception("video: failed to start playback source=%s", media_source)
+
+  def rotate_clockwise(self) -> int:
+    if self.player is None:
+      return 0
+
+    current = 0
+    try:
+      current = int(getattr(self.player, "video_rotate", 0) or 0)
+    except Exception:
+      log.exception("video: failed to read current rotation")
+
+    new_rotation = (current + self.ROTATION_STEP) % 360
+    try:
+      self.player.video_rotate = new_rotation
+      log.debug("video: rotation set to %s", new_rotation)
+    except Exception:
+      log.exception("video: failed to set rotation=%s", new_rotation)
+      return current % 360
+    return new_rotation
+
+  def toggle_flip_horizontal(self) -> bool:
+    if self.player is None:
+      return False
+
+    try:
+      self.player.command("vf", "toggle", "hflip")
+      log.debug("video: hflip toggled")
+      return True
+    except Exception:
+      log.exception("video: failed to toggle hflip")
+      return False
+
+  def request_snapshot(self, target_path: str) -> bool:
+    if self.player is None:
+      return False
+
+    try:
+      future = self.player.command_async(
+        "screenshot-to-file",
+        target_path,
+        "video",
+      )
+    except Exception:
+      log.exception("video: failed to queue snapshot path=%s", target_path)
+      return False
+
+    def _on_done(done_future) -> None:
+      try:
+        done_future.result()
+      except Exception as exc:
+        log.exception("video: snapshot failed path=%s", target_path)
+        self.snapshot_completed.emit(target_path, False, str(exc))
+      else:
+        self.snapshot_completed.emit(target_path, True, "")
+
+    future.add_done_callback(_on_done)
+    return True
 
   def _maybe_paint_next_frame(self) -> None:
     if self._shutting_down:

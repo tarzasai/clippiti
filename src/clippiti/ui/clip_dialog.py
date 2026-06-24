@@ -15,7 +15,7 @@ from ..services.clipper import ClipBufferStage, ClipConfig, ClipExportContext, C
 from ..services.remux_queue import FfmpegJob, FfmpegJobResult
 
 
-log = logging.getLogger("clippiti.ui.clip_dialog")
+log = logging.getLogger("clippiti")
 
 
 class _TaskWorker(QObject):

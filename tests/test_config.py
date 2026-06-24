@@ -15,6 +15,7 @@ def test_normalize_config_clamps_controls_fields_and_section_defaults() -> None:
     "general": {
       "controls_area": "bad",
       "controls_resize_debounce_ms": "bad",
+      "controls_position": "invalid",
       "mpv_options": "invalid",
     },
     "clip": "invalid",
@@ -26,6 +27,7 @@ def test_normalize_config_clamps_controls_fields_and_section_defaults() -> None:
 
   assert normalized["general"]["controls_area"] == 300
   assert normalized["general"]["controls_resize_debounce_ms"] == 40
+  assert normalized["general"]["controls_position"] == "bottom-right-vertical"
   assert normalized["general"]["mpv_options"] == {}
   assert isinstance(normalized["clip"], dict)
   assert isinstance(normalized["snapshot"], dict)
@@ -36,6 +38,12 @@ def test_normalize_config_clamps_controls_fields_and_section_defaults() -> None:
 def test_normalize_config_handles_non_dict_general() -> None:
   normalized = config_mod.normalize_config({"general": "oops"})
   assert normalized["general"]["controls_area"] == 300
+  assert normalized["general"]["controls_position"] == "bottom-right-vertical"
+
+
+def test_normalize_config_preserves_valid_controls_position() -> None:
+  normalized = config_mod.normalize_config({"general": {"controls_position": "top-left-vertical"}})
+  assert normalized["general"]["controls_position"] == "top-left-vertical"
 
 
 def test_load_config_returns_defaults_when_file_missing(tmp_path: Path) -> None:

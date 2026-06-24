@@ -4,18 +4,18 @@ from copy import deepcopy
 
 from PyQt6.QtWidgets import (
   QCheckBox,
+  QComboBox,
   QDialog,
   QDialogButtonBox,
   QFileDialog,
   QFormLayout,
-  QGroupBox,
   QHBoxLayout,
   QLabel,
   QLineEdit,
   QPlainTextEdit,
   QPushButton,
-  QScrollArea,
   QSpinBox,
+  QTabWidget,
   QVBoxLayout,
   QWidget,
 )
@@ -25,26 +25,28 @@ from ..model.config import normalize_config
 
 
 class SettingsDialog(QDialog):
+  TOOLBAR_POSITION_OPTIONS: list[tuple[str, str]] = [
+    ("top-right-horizontal", "Top-right, horizontal"),
+    ("top-right-vertical", "Top-right, vertical"),
+    ("bottom-right-horizontal", "Bottom-right, horizontal"),
+    ("bottom-right-vertical", "Bottom-right, vertical"),
+    ("bottom-left-vertical", "Bottom-left, vertical"),
+    ("bottom-left-horizontal", "Bottom-left, horizontal"),
+    ("top-left-horizontal", "Top-left, horizontal"),
+    ("top-left-vertical", "Top-left, vertical"),
+  ]
+
   def __init__(self, config: dict[str, object], parent=None) -> None:
     super().__init__(parent)
     self.setWindowTitle("Settings")
-    self.resize(760, 620)
+    self.setMinimumWidth(760)
+    self.resize(self.minimumWidth(), 640)
 
     self._source = normalize_config(deepcopy(config))
 
-    sections_widget = QWidget(self)
-    sections_layout = QVBoxLayout(sections_widget)
-    sections_layout.setContentsMargins(0, 0, 0, 0)
-    sections_layout.setSpacing(12)
-    sections_layout.addWidget(self._build_group("General", self._build_general_tab()))
-    sections_layout.addWidget(self._build_group("Recording", self._build_recording_tab()))
-    sections_layout.addWidget(self._build_group("Clip", self._build_clip_tab()))
-    sections_layout.addWidget(self._build_group("Snapshot", self._build_snapshot_tab()))
-    sections_layout.addStretch(1)
-
-    scroller = QScrollArea(self)
-    scroller.setWidgetResizable(True)
-    scroller.setWidget(sections_widget)
+    tabs = QTabWidget(self)
+    tabs.addTab(self._build_general_tab(), "General")
+    tabs.addTab(self._build_actions_tab(), "Actions")
 
     restart_hint = QLabel("(*) requires relaunch")
     restart_hint.setWordWrap(False)
@@ -70,7 +72,7 @@ class SettingsDialog(QDialog):
 
     layout = QVBoxLayout(self)
     layout.setSpacing(12)
-    layout.addWidget(scroller)
+    layout.addWidget(tabs)
     layout.addLayout(footer_layout)
 
   def updated_config(self) -> dict[str, object]:
@@ -83,6 +85,7 @@ class SettingsDialog(QDialog):
     general["ffmpeg_path"] = self._ffmpeg_path_input.text().strip() or "ffmpeg"
     general["controls_area"] = int(self._controls_area_input.value())
     general["controls_resize_debounce_ms"] = int(self._resize_debounce_input.value())
+    general["controls_position"] = str(self._controls_position_input.currentData())
     general["segment_seconds"] = int(self._segment_seconds_input.value())
     general["window_segments"] = int(self._window_segments_input.value())
 
@@ -112,11 +115,23 @@ class SettingsDialog(QDialog):
   def _build_general_tab(self) -> QWidget:
     tab = QWidget(self)
     layout = QFormLayout(tab)
+    layout.setContentsMargins(12, 12, 12, 12)
+    layout.setSpacing(8)
 
     general = self._source["general"]
     streamlink = self._source["streamlink"]
 
-    self._ffmpeg_path_input = QLineEdit(str(general.get("ffmpeg_path", "ffmpeg")), tab)
+    self._controls_position_input = QComboBox(tab)
+    for value, label in self.TOOLBAR_POSITION_OPTIONS:
+      self._controls_position_input.addItem(label, value)
+    current_position = str(general.get("controls_position", "bottom-right-vertical"))
+    current_index = self._controls_position_input.findData(current_position)
+    self._controls_position_input.setCurrentIndex(max(0, current_index))
+    controls_position_row = self._build_inline_hint_row(
+      self._controls_position_input,
+      "Default toolbar corner and orientation",
+      tab,
+    )
 
     self._controls_area_input = QSpinBox(tab)
     self._controls_area_input.setRange(50, 2000)
@@ -132,7 +147,7 @@ class SettingsDialog(QDialog):
     self._resize_debounce_input.setValue(int(general.get("controls_resize_debounce_ms", 40)))
     resize_debounce_row = self._build_inline_hint_row(
       self._resize_debounce_input,
-      "Delay before video and toolbar reposition on window resize",
+      "Delay before video reposition on window resize to avoid stutter",
       tab,
     )
 
@@ -154,10 +169,12 @@ class SettingsDialog(QDialog):
       tab,
     )
 
+    self._ffmpeg_path_input = QLineEdit(str(general.get("ffmpeg_path", "ffmpeg")), tab)
+
     self._streamlink_default_args_input = QPlainTextEdit(tab)
     self._streamlink_default_args_input.setPlainText(str(streamlink.get("default_args", "")))
     streamlink_height = self._streamlink_default_args_input.fontMetrics().height() * 3 + 16
-    self._streamlink_default_args_input.setFixedHeight(streamlink_height)
+    self._streamlink_default_args_input.setMinimumHeight(streamlink_height)
 
     self._mpv_options_input = QPlainTextEdit(tab)
     mpv_options = general.get("mpv_options", {})
@@ -195,12 +212,15 @@ class SettingsDialog(QDialog):
     yaml_hint.setIndent(0)
     yaml_hint.setContentsMargins(0, 0, 0, 0)
 
+    layout.addRow("", self._build_section_label("Interface", tab))
+    layout.addRow("default toolbar pos.", controls_position_row)
+    layout.addRow("toolbar trigger area", controls_area_row)
+    layout.addRow("resize debounce (ms)", resize_debounce_row)
+    layout.addRow("", self._build_section_label("Pipeline & Player (*)", tab))
     layout.addRow(
       "ffmpeg executable",
       self._build_file_row(self._ffmpeg_path_input, "Select ffmpeg executable", "Browse..."),
     )
-    layout.addRow("toolbar trigger area", controls_area_row)
-    layout.addRow("resize debounce (ms)", resize_debounce_row)
     layout.addRow("segment seconds (*)", segment_seconds_row)
     layout.addRow("window segments (*)", window_segments_row)
     layout.addRow("streamlink args (*)", self._streamlink_default_args_input)
@@ -209,52 +229,52 @@ class SettingsDialog(QDialog):
     layout.addRow("", yaml_hint)
     return tab
 
-  def _build_recording_tab(self) -> QWidget:
+  def _build_actions_tab(self) -> QWidget:
     tab = QWidget(self)
     layout = QFormLayout(tab)
-    recording = self._source["recording"]
+    layout.setContentsMargins(12, 12, 12, 12)
+    layout.setSpacing(8)
 
+    recording = self._source["recording"]
+    clip = self._source["clip"]
+    snapshot = self._source["snapshot"]
+
+    # Recording
     self._recording_dir_input = QLineEdit(str(recording.get("dir", "")), tab)
     self._recording_filename_input = QLineEdit(
       str(recording.get("filename_format", "{author}_{timestamp}")),
       tab,
     )
-    self._recording_remux_input = QCheckBox("Auto remux to MP4", tab)
+    self._recording_remux_input = QCheckBox("Auto remux the .ts file when the recording is finished", tab)
     self._recording_remux_input.setChecked(bool(recording.get("auto_remux_to_mp4", False)))
 
+    layout.addRow("", self._build_section_label("Recording", tab))
     layout.addRow("output dir", self._build_directory_row(self._recording_dir_input, "Select recording output folder"))
     layout.addRow("filename format", self._recording_filename_input)
-    layout.addRow("", self._recording_remux_input)
-    return tab
+    layout.addRow("convert to MP4", self._recording_remux_input)
 
-  def _build_clip_tab(self) -> QWidget:
-    tab = QWidget(self)
-    layout = QFormLayout(tab)
-    clip = self._source["clip"]
-
+    # Clip
     self._clip_dir_input = QLineEdit(str(clip.get("dir", "")), tab)
     self._clip_duration_input = QSpinBox(tab)
     self._clip_duration_input.setRange(5, 600)
     self._clip_duration_input.setValue(int(clip.get("default_duration", 30)))
 
+    layout.addRow("", self._build_section_label("Clip", tab))
     layout.addRow("output dir", self._build_directory_row(self._clip_dir_input, "Select clip output folder"))
     layout.addRow("default duration (s)", self._clip_duration_input)
-    return tab
 
-  def _build_snapshot_tab(self) -> QWidget:
-    tab = QWidget(self)
-    layout = QFormLayout(tab)
-    snapshot = self._source["snapshot"]
-
+    # Snapshot
     self._snapshot_dir_input = QLineEdit(str(snapshot.get("dir", "")), tab)
     self._snapshot_filename_input = QLineEdit(
       str(snapshot.get("filename_format", "{name}_{timestamp}")),
       tab,
     )
 
+    layout.addRow("", self._build_section_label("Snapshot", tab))
     layout.addRow("output dir", self._build_directory_row(self._snapshot_dir_input, "Select snapshot output folder"))
     layout.addRow("filename format", self._snapshot_filename_input)
     return tab
+
 
   def _build_directory_row(self, line_edit: QLineEdit, title: str) -> QHBoxLayout:
     row_layout = QHBoxLayout()
@@ -304,9 +324,10 @@ class SettingsDialog(QDialog):
     if selected:
       line_edit.setText(selected)
 
-  def _build_group(self, title: str, content: QWidget) -> QGroupBox:
-    group = QGroupBox(title, self)
-    group_layout = QVBoxLayout(group)
-    group_layout.setContentsMargins(12, 10, 12, 12)
-    group_layout.addWidget(content)
-    return group
+  def _build_section_label(self, text: str, parent: QWidget) -> QLabel:
+    label = QLabel(text, parent)
+    font = label.font()
+    font.setPointSizeF(font.pointSizeF() * 1.2)
+    label.setFont(font)
+    label.setContentsMargins(0, 8, 0, 2)
+    return label

@@ -2,12 +2,8 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
-import logging
 
 from PyQt6.QtCore import QObject, QProcess, pyqtSignal
-
-
-log = logging.getLogger("clippiti.services.remux_queue")
 
 
 @dataclass

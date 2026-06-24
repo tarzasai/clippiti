@@ -27,7 +27,7 @@ packages = ["clippiti"]
 "" = "src"
 
 [tool.setuptools_scm]
-version_scheme = "post-release"
+version_scheme = "version_scheme"
 local_scheme = "no-local-version"
 write_to = "src/clippiti/_version.py"
 

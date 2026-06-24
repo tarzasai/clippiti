@@ -13,7 +13,7 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
 
 from ..services.buffer_engine import SessionRuntime
 
-log = logging.getLogger("clippiti.services.recording")
+log = logging.getLogger("clippiti")
 
 
 @dataclass

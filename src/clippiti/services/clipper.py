@@ -13,7 +13,7 @@ from .buffer_engine import SessionRuntime
 from .remux_queue import FfmpegJob
 
 
-log = logging.getLogger("clippiti.services.clipper")
+log = logging.getLogger("clippiti")
 
 _EXTINF_RE = re.compile(r"#EXTINF:([\d.]+)")
 _FFMPEG_QUIET = ["-hide_banner", "-loglevel", "error"]
