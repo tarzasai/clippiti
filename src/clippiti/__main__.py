@@ -8,6 +8,7 @@ import sys
 import threading
 import shutil
 import importlib.util
+from importlib.metadata import version, PackageNotFoundError
 
 os.environ.setdefault('QT_QPA_ORG_NAME', 'Clippiti')
 os.environ.setdefault('QT_QPA_APPLICATION_NAME', 'Clippiti')
@@ -29,6 +30,13 @@ from .services.mpv_args import build_mpv_options
 from .services.clipper import ClipConfig
 from .services.recording import RecordingConfig
 from .ui.app import run_app
+
+# Determine version: prefer installed distribution metadata, fallback to package __version__
+try:
+  dist_ver = version('clippiti')
+except PackageNotFoundError:
+  import clippiti
+  dist_ver = getattr(clippiti, '__version__', 'dev')
 
 
 def configure_logging(verbose: bool) -> logging.Logger:
@@ -110,11 +118,7 @@ def main(argv: list[str] | None = None) -> int:
   runtime = None
   diagnostics_logged = False
 
-  try:
-    from ._version import __version__
-  except ImportError:
-    __version__ = "unknown"
-  log.info("clippiti version %s", __version__)
+  log.info("clippiti version %s", dist_ver)
 
   workdir = resolve_workdir(args.workdir)
   workdir.mkdir(parents=True, exist_ok=True)
