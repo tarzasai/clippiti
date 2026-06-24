@@ -1,7 +1,7 @@
 # Clippiti
-*Single-stream live player with rolling buffer, clipping, and recording.*
+*Cross-platforms livestream player with clipping and recording.*
 
-Clippiti is a PyQt6 desktop app that opens a live stream through Streamlink, keeps a rolling local buffer, and lets you export clips or recordings without leaving the player.
+Clippiti is a PyQt6 desktop app that opens live streams via Streamlink, keeps a rolling local buffer, and lets you take snapshots or save both live and past moments as clips.
 
 ## Features
 
