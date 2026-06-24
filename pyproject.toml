@@ -16,6 +16,28 @@ dependencies = [
     "PyYAML>=6.0",
     "streamlink>=6.0",
 ]
+authors = [
+    { name = "Tarzasai" },
+]
+keywords = [
+  "pyqt6",
+  "streamlink",
+  "mpv",
+  "ffmpeg",
+  "hls",
+  "livestream",
+  "video-player",
+  "desktop-app",
+]
+classifiers = [
+	"Development Status :: 4 - Beta",
+	"Intended Audience :: End Users/Desktop",
+	"Programming Language :: Python :: 3",
+	"Programming Language :: Python :: 3.12",
+	"Operating System :: OS Independent",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Utilities",
+]
 
 [project.scripts]
 clippiti = "clippiti.__main__:main"
