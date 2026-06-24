@@ -182,7 +182,7 @@ def main(argv: list[str] | None = None) -> int:
     metadata.title,
   )
 
-  window_title = f"{metadata.author} - {metadata.title} - {metadata.category} - [{metadata.plugin}] - clippiti"
+  window_title = f"{metadata.author} - {metadata.title} - {metadata.category} [{metadata.plugin}] - clippiti"
 
   startup_cancel = threading.Event()
 
