@@ -51,18 +51,19 @@ class StartupWorker(QObject):
 
 
 _HELP_TEXT = (
-  "<code><b>H</b></code> - Help<br>"
-  "<code><b>S</b></code> - Snapshot<br>"
-  "<code><b>C</b></code> - Clip dialog<br>"
-  "<code><b>R</b></code> - Start / stop recording<br>"
-  "<code><b>M</b></code> - Mute / Unmute<br>"
-  "<code><b>O</b></code> - Rotate video +90\N{DEGREE SIGN} clockwise<br>"
-  "<code><b>F</b></code> - Flip video horizontally<br>"
-  "<code><b>P</b></code> - Pin / Unpin toolbar<br>"
-  "<code><b>T</b></code> - Next toolbar position (<code><b>Shift+T</b></code> to go back)<br>"
-  "<br>"
-  "Volume setting:<br>"
-  "<code><b>-/+</b></code>, <code><b>PgDn/PgUp</b></code> or <code><b>Mouse Wheel</b></code>"
+  "<table cellspacing='0' cellpadding='2'>"
+  "<tr><td align='center' style='padding-right: 20px;'>H</td><td>This help</td></tr>"
+  "<tr><td align='center' style='padding-right: 20px;'>S</td><td>Snapshot</td></tr>"
+  "<tr><td align='center' style='padding-right: 20px;'>C</td><td>Make a clip</td></tr>"
+  "<tr><td align='center' style='padding-right: 20px;'>R</td><td>Start / stop recording</td></tr>"
+  "<tr><td align='center' style='padding-right: 20px;'>M</td><td>Mute / Unmute</td></tr>"
+  "<tr><td align='center' style='padding-right: 20px;'>O</td><td>Rotate video +90\N{DEGREE SIGN} clockwise</td></tr>"
+  "<tr><td align='center' style='padding-right: 20px;'>F</td><td>Flip video horizontally</td></tr>"
+  "<tr><td align='center' style='padding-right: 20px;'>P</td><td>Pin / Unpin toolbar</td></tr>"
+  "<tr><td align='center' style='padding-right: 20px;'>T</td><td>Next toolbar position (Shift+T to go back)</td></tr>"
+  "<tr><td align='center' style='padding-right: 20px;'>K</td><td>Settings</td></tr>"
+  "<tr><td align='center' style='padding-right: 20px;'>+/-</td><td>Volume up / down (also PgUp/PgDn or mouse wheel)</td></tr>"
+  "</table>"
 )
 
 ICON_PATH = Path(__file__).parent.parent / "resources" / "icons" / "app-icon.png"
@@ -575,6 +576,11 @@ class MainWindow(QMainWindow):
         self.osd.clear_message()
       else:
         self.osd.show_message("keyboard shortcuts", _HELP_TEXT, persistent=True)
+      event.accept()
+      return
+
+    if key == Qt.Key.Key_K:
+      self._settings_action()
       event.accept()
       return
 
