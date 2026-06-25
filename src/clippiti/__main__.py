@@ -31,6 +31,7 @@ from .services.mpv_args import build_mpv_options
 from .services.clipper import ClipConfig
 from .services.recording import RecordingConfig
 from .ui.app import run_app
+from wakepy import keep as _wakepy_keep
 
 if TYPE_CHECKING:
   from .services.buffer_engine import SessionRuntime
@@ -52,6 +53,7 @@ def configure_logging(verbose: bool) -> logging.Logger:
     stream=sys.stdout,
     force=True,
   )
+  logging.getLogger("wakepy").setLevel(logging.WARNING)
   logger = logging.getLogger("clippiti")
   logger.setLevel(level)
   return logger
@@ -236,7 +238,7 @@ def main(argv: list[str] | None = None) -> int:
   )
 
   try:
-    result = run_app(
+    _run_kwargs = dict(
       media_source=None,
       mpv_options=mpv_options,
       trigger_radius=trigger_radius,
@@ -251,6 +253,9 @@ def main(argv: list[str] | None = None) -> int:
       on_startup_failed=handle_runtime_failure,
       on_startup_cancel=startup_cancel.set,
     )
+    log.debug("sleep inhibitor: activating")
+    with _wakepy_keep.running(on_fail="warn"):
+      result = run_app(**_run_kwargs)
     if runtime is None and result.startup_result is not None:
       runtime = result.startup_result
     return result.exit_code

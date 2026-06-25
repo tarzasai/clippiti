@@ -15,6 +15,7 @@ dependencies = [
     "PyQt6>=6.6.0",
     "PyYAML>=6.0",
     "streamlink>=6.0",
+    "wakepy>=1.0.0",
 ]
 authors = [
     { name = "Tarzasai" },
