@@ -286,7 +286,7 @@ class MainWindow(QMainWindow):
   @pyqtSlot(str, bool, str)
   def _on_snapshot_completed(self, target_path: str, success: bool, error: str) -> None:
     if success:
-      self.osd.show_message("Snapshot saved", Path(target_path).name)
+      self.osd.show_snapshot_preview(target_path, timeout_ms=2000)
       return
     detail = error.strip() if error else "save failed"
     self.osd.show_message("Snapshot", detail)
