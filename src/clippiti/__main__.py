@@ -254,7 +254,7 @@ def main(argv: list[str] | None = None) -> int:
       on_startup_cancel=startup_cancel.set,
     )
     log.debug("sleep inhibitor: activating")
-    with _wakepy_keep.running(on_fail="warn"):
+    with _wakepy_keep.presenting(on_fail="warn"):
       result = run_app(**_run_kwargs)
     if runtime is None and result.startup_result is not None:
       runtime = result.startup_result
