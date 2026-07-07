@@ -284,7 +284,17 @@ class ControlStrip(QFrame):
           self._set_hovering(True)
         else:
           self._schedule_collapse()
+      elif event.type() == QEvent.Type.Leave:
+        self._schedule_collapse()
     return super().eventFilter(obj, event)
+
+  def enterEvent(self, event) -> None:
+    self._set_hovering(True)
+    super().enterEvent(event)
+
+  def leaveEvent(self, event) -> None:
+    self._schedule_collapse()
+    super().leaveEvent(event)
 
   def _update_audio_icon(self) -> None:
     if self._muted:
