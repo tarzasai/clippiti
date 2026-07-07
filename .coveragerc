@@ -2,9 +2,11 @@
 branch = True
 omit =
   */__init__.py
+  src/clippiti/ui/*
   tests/*
 
 [report]
 omit =
   */__init__.py
+  src/clippiti/ui/*
   tests/*

@@ -9,13 +9,16 @@ import logging
 from copy import deepcopy
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QObject, QThread, QTimer, Qt, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QIcon, QKeyEvent, QResizeEvent
+from pathlib import Path as _Path
+
+from PyQt6.QtCore import QObject, QStandardPaths, QThread, QTimer, Qt, pyqtSignal, pyqtSlot
+from PyQt6.QtGui import QIcon, QKeyEvent, QPixmap, QResizeEvent
 from PyQt6.QtWidgets import QApplication, QMainWindow, QMessageBox
 import os
 
 from .clip_dialog import ClipWorkflow
 from .control_strip import ControlStrip
+from ..services.favicons import get_favicon
 from .osd import OsdOverlay
 from .settings_dialog import SettingsDialog
 from .video_surface import VideoSurface
@@ -34,6 +37,25 @@ log = logging.getLogger("clippiti")
 class AppRunResult:
   exit_code: int
   startup_result: object | None = None
+
+
+class FaviconWorker(QObject):
+  finished = pyqtSignal(object)  # bytes | None
+
+  def __init__(self, url: str, plugin: str) -> None:
+    super().__init__()
+    self._url = url
+    self._plugin = plugin
+
+  @pyqtSlot()
+  def run(self) -> None:
+    cache_dir = _Path(QStandardPaths.writableLocation(
+      QStandardPaths.StandardLocation.CacheLocation
+    ))
+    log.debug("favicon worker: url=%s plugin=%s cache_dir=%s", self._url, self._plugin, cache_dir)
+    data = get_favicon(self._url, self._plugin, cache_dir, size=32)
+    log.debug("favicon worker: result=%s", "bytes(%d)" % len(data) if isinstance(data, bytes) else None)
+    self.finished.emit(data)
 
 
 class StartupWorker(QObject):
@@ -136,6 +158,9 @@ class MainWindow(QMainWindow):
 
     self._apply_runtime_config(self._config, persist=False)
 
+    self._favicon_thread: QThread | None = None
+    self._favicon_worker: FaviconWorker | None = None
+
     self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
     self.video.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
     self.video.setFocus()
@@ -157,7 +182,29 @@ class MainWindow(QMainWindow):
     self._recording.shutdown()
     self.strip.shutdown()
     self.video.shutdown()
+    if self._favicon_thread is not None and self._favicon_thread.isRunning():
+      self._favicon_thread.quit()
+      self._favicon_thread.wait(1000)
     log.info("window: shutdown complete")
+
+  def set_stream_icon(self, url: str, plugin: str) -> None:
+    thread = QThread(self)
+    worker = FaviconWorker(url, plugin)
+    worker.moveToThread(thread)
+    thread.started.connect(worker.run)
+    worker.finished.connect(self._on_favicon_ready)
+    worker.finished.connect(thread.quit)
+    self._favicon_thread = thread
+    self._favicon_worker = worker  # prevent GC before thread starts
+    thread.start()
+
+  @pyqtSlot(object)
+  def _on_favicon_ready(self, data: object) -> None:
+    if not isinstance(data, bytes) or self._shutting_down:
+      return
+    pixmap = QPixmap()
+    if pixmap.loadFromData(data):
+      self.setWindowIcon(QIcon(pixmap))
 
   def set_window_title(self, title: str) -> None:
     self.setWindowTitle(title)

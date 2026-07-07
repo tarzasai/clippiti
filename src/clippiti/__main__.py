@@ -213,6 +213,7 @@ def main(argv: list[str] | None = None) -> int:
       log.debug("ffmpeg_stderr: %s", runtime.ffmpeg_stderr_path)
     window.set_runtime(runtime)
     window.set_media_source(str(runtime.playlist_path))
+    window.set_stream_icon(args.url, metadata.plugin)
 
   def handle_runtime_failure(exc: Exception) -> None:
     nonlocal diagnostics_logged
