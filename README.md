@@ -6,7 +6,7 @@ Clippiti is a PyQt6 desktop app that opens live streams via Streamlink, keeps a 
 ## Features
 
 - Live stream playback via Streamlink + mpv
-- Rolling HLS buffer pipeline (Streamlink -> ffmpeg)
+- Rolling HLS buffer pipeline (Streamlink API -> ffmpeg)
 - Clip export from buffered timeline
 - Recording with optional auto-remux to MP4
 - Floating controls, keyboard shortcuts, and OSD feedback
@@ -27,7 +27,9 @@ Clippiti requires these external tools at runtime:
 - `mpv` / `libmpv` (used by `python-mpv` for playback)
 - `ffmpeg`
 
-`streamlink` is installed from Python packaging (`clippiti-player` dependency), so you do not need to install a system `streamlink` package.
+`streamlink` is used as a Python library (a `clippiti-player` dependency); Clippiti
+calls the Streamlink API in-process rather than spawning a `streamlink` command, so
+you do not need a system `streamlink` package on `PATH`.
 
 Install them with your OS package manager.
 
@@ -111,20 +113,22 @@ PYTHONPATH=src ./.venv/bin/python -m clippiti <url> <quality>
 ```text
 positional:
   url                      Stream URL to open
-  quality                  Desired stream quality
+  quality                  Desired stream quality (e.g. best, worst, 720p)
 
 optional:
-  --sl TEXT                Pass-through Streamlink arguments string
   --mpv TEXT               Additional mpv options (YAML or key=value)
   --config PATH            Path to config YAML file
   --workdir PATH           Path to runtime working directory
   --verbose                Enable verbose startup logs
+
+Any arguments after a `--` separator are forwarded to Streamlink's own parser.
+Run `python -m streamlink --help` to see the available Streamlink options.
 ```
 
 Example:
 
 ```bash
-clippiti https://www.twitch.tv/example_channel best --sl "--retry-max 5" --mpv "vf=hflip"
+clippiti https://www.twitch.tv/example_channel best --mpv "vf=hflip" -- --retry-max 5 --twitch-disable-ads
 ```
 
 ## Companion App: Lurkiti
@@ -175,9 +179,9 @@ PYTHONPATH=src ./.venv/bin/python -m pytest -q
 
 ## Troubleshooting
 
-- Stream metadata probe fails:
+- Stream resolution fails:
   - Verify URL is online/public
-  - Verify `streamlink` is installed and runnable
+  - Verify the `streamlink` package resolves the URL (`python -m streamlink <url>`)
 - Playback pipeline does not start:
   - Verify `ffmpeg` is installed and reachable
   - Use `--verbose` to inspect startup logs

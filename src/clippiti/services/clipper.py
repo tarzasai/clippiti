@@ -87,6 +87,7 @@ class ClipService:
       subprocess.run(
         merge_command,
         check=True,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         timeout=_STAGE_MERGE_TIMEOUT_S,
@@ -218,6 +219,7 @@ class ClipService:
       subprocess.run(
         command,
         check=True,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         timeout=_PREVIEW_TIMEOUT_S,
@@ -239,6 +241,7 @@ class ClipService:
         subprocess.run(
           fallback,
           check=True,
+          stdin=subprocess.DEVNULL,
           stdout=subprocess.DEVNULL,
           stderr=subprocess.DEVNULL,
           timeout=_PREVIEW_TIMEOUT_S,

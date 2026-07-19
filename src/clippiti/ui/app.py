@@ -226,18 +226,18 @@ class MainWindow(QMainWindow):
     if self._offline_close_pending:
       return
 
-    streamlink_proc = getattr(self._runtime, "streamlink_proc", None)
+    streamlink_pump = getattr(self._runtime, "stream_pump", None)
     ffmpeg_proc = getattr(self._runtime, "ffmpeg_proc", None)
-    streamlink_terminated = self._is_terminated(streamlink_proc)
+    streamlink_terminated = self._is_terminated(streamlink_pump)
     ffmpeg_terminated = self._is_terminated(ffmpeg_proc)
     if not (streamlink_terminated or ffmpeg_terminated):
       return
 
     self._offline_close_pending = True
-    streamlink_code = self._poll_code(streamlink_proc)
+    streamlink_code = self._poll_code(streamlink_pump)
     ffmpeg_code = self._poll_code(ffmpeg_proc)
     log.warning(
-      "pipeline terminated: streamlink_exit=%s ffmpeg_exit=%s; closing window",
+      "pipeline terminated: stream_pump_exit=%s ffmpeg_exit=%s; closing window",
       streamlink_code,
       ffmpeg_code,
     )

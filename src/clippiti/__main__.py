@@ -4,6 +4,7 @@ import argparse
 import logging
 from pathlib import Path
 import os
+import shlex
 import sys
 import threading
 import shutil
@@ -16,7 +17,6 @@ os.environ.setdefault('QT_QPA_APPLICATION_NAME', 'Clippiti')
 os.environ.setdefault('QT_LOGGING_RULES', 'qt.qpa.services=false')
 
 from .services.buffer_engine import cleanup_orphan_session_dirs
-from .services.buffer_engine import resolve_stream_metadata
 from .services.buffer_engine import cleanup_runtime_artifacts
 from .services.buffer_engine import start_single_session_pipeline
 from .services.buffer_engine import terminate_runtime
@@ -26,7 +26,8 @@ from .model.config import normalize_config
 from .model.config import resolve_config_path
 from .model.config import resolve_workdir
 from .model.config import save_config
-from .services.streamlink_args import build_streamlink_command
+from .services.sl_session import create_session
+from .services.sl_session import resolve_stream
 from .services.mpv_args import build_mpv_options
 from .services.clipper import ClipConfig
 from .services.recording import RecordingConfig
@@ -62,15 +63,17 @@ def configure_logging(verbose: bool) -> logging.Logger:
 def build_parser() -> argparse.ArgumentParser:
   parser = argparse.ArgumentParser(
     prog="clippiti",
-    description="Single-stream live player with floating controls.",
+    description="Livestream player with clipping and recording capabilities, built on Streamlink and mpv.",
+    formatter_class=argparse.RawDescriptionHelpFormatter,
+    epilog=(
+      "Arguments after a '--' separator are passed through to Streamlink, e.g.:\n"
+      "    clippiti URL best -- --twitch-disable-ads --hls-live-edge 6\n\n"
+      "To see available Streamlink options, run:\n"
+      "    streamlink --help\n\n"
+    ),
   )
   parser.add_argument("url", help="Stream URL to open")
-  parser.add_argument("quality", help="Desired stream quality (for streamlink pipeline)")
-  parser.add_argument(
-    "--sl",
-    default="",
-    help="Pass-through Streamlink arguments string",
-  )
+  parser.add_argument("quality", help="Desired stream quality (e.g. best, worst, 720p)")
   parser.add_argument(
     "--config",
     default=None,
@@ -94,18 +97,26 @@ def build_parser() -> argparse.ArgumentParser:
   return parser
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-  return build_parser().parse_args(argv)
+def split_streamlink_args(argv: list[str]) -> tuple[list[str], list[str]]:
+  """Split argv on the first standalone '--' separator.
+
+  Everything before is parsed by Clippiti; everything after is forwarded to
+  Streamlink's own argument parser verbatim.
+  """
+  if "--" in argv:
+    index = argv.index("--")
+    return argv[:index], argv[index + 1:]
+  return list(argv), []
+
+
+def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[str]]:
+  argv = list(sys.argv[1:] if argv is None else argv)
+  clippiti_argv, streamlink_argv = split_streamlink_args(argv)
+  return build_parser().parse_args(clippiti_argv), streamlink_argv
 
 
 def log_startup_diagnostics(log: logging.Logger, ffmpeg_path: str) -> None:
   """Log dependency diagnostics, intended for startup failure paths only."""
-  streamlink_bin = shutil.which("streamlink")
-  if streamlink_bin:
-    log.error("diagnostic: streamlink=ok (%s)", streamlink_bin)
-  else:
-    log.error("diagnostic: streamlink=missing (not found in PATH)")
-
   ffmpeg_bin = shutil.which(ffmpeg_path)
   if ffmpeg_bin:
     log.error("diagnostic: ffmpeg=ok (%s)", ffmpeg_bin)
@@ -120,7 +131,7 @@ def log_startup_diagnostics(log: logging.Logger, ffmpeg_path: str) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-  args = parse_args(argv)
+  args, streamlink_argv = parse_args(argv)
   log = configure_logging(args.verbose)
   runtime: SessionRuntime | None = None
   diagnostics_logged = False
@@ -140,15 +151,10 @@ def main(argv: list[str] | None = None) -> int:
   ensure_output_dirs(config)
 
   streamlink_default_args = str(config["streamlink"].get("default_args", ""))
-  streamlink_cmd = build_streamlink_command(
-    url=args.url,
-    quality=args.quality,
-    default_args=streamlink_default_args,
-    cli_args=args.sl,
-  )
+  streamlink_tokens = shlex.split(streamlink_default_args) + streamlink_argv
   log.info("config: %s", config_path)
   log.info("workdir: %s", workdir)
-  log.info("streamlink argv: %s", " ".join(streamlink_cmd))
+  log.info("streamlink args: %s", " ".join(streamlink_tokens) or "(none)")
 
   general = config["general"]
   trigger_radius = int(general.get("controls_area", 300))
@@ -163,19 +169,22 @@ def main(argv: list[str] | None = None) -> int:
   )
   log.info("effective mpv options: %s", mpv_options)
 
+  session = create_session()
   try:
-    metadata = resolve_stream_metadata(
+    resolved = resolve_stream(
+      session=session,
       url=args.url,
-      default_args=streamlink_default_args,
-      cli_args=args.sl,
+      quality=args.quality,
+      tokens=streamlink_tokens,
     )
   except Exception as exc:
-    log.error("error: stream metadata probe failed (offline/private?): %s", exc)
+    log.error("error: stream resolution failed (offline/private/bad args?): %s", exc)
     if not diagnostics_logged:
       diagnostics_logged = True
       log_startup_diagnostics(log, ffmpeg_path)
     return 2
 
+  metadata = resolved.metadata
   log.info(
     "metadata: plugin=%s author=%s category=%s title=%s",
     metadata.plugin,
@@ -194,7 +203,7 @@ def main(argv: list[str] | None = None) -> int:
       ffmpeg_path=ffmpeg_path,
       url=args.url,
       quality=args.quality,
-      streamlink_cmd=streamlink_cmd,
+      stream=resolved.stream,
       segment_seconds=segment_seconds,
       window_segments=window_segments,
       metadata=metadata,
@@ -207,8 +216,6 @@ def main(argv: list[str] | None = None) -> int:
     log.info("status: %s", runtime.status)
     log.info("playlist: %s", runtime.playlist_path)
     log.debug("buffer_seconds: %s", runtime.buffer_seconds)
-    if runtime.streamlink_stderr_path is not None:
-      log.debug("streamlink_stderr: %s", runtime.streamlink_stderr_path)
     if runtime.ffmpeg_stderr_path is not None:
       log.debug("ffmpeg_stderr: %s", runtime.ffmpeg_stderr_path)
     window.set_runtime(runtime)

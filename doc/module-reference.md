@@ -6,7 +6,7 @@
 - Responsibilities:
   - CLI parsing
   - config loading/saving
-  - metadata probing
+  - stream resolution (Streamlink API)
   - startup pipeline creation
   - final teardown/cleanup
 
@@ -21,12 +21,12 @@
 
 ## Services Layer
 
-- `src/clippiti/services/streamlink_args.py`
-  - Streamlink args parse/merge/build helpers.
+- `src/clippiti/services/sl_session.py`
+  - In-process Streamlink session, argument parsing (via Streamlink's own CLI parser), URL/quality resolution, metadata, and the stream-to-ffmpeg pump.
 - `src/clippiti/services/mpv_args.py`
   - mpv options parse/filter/merge with force/allow/block behavior.
 - `src/clippiti/services/buffer_engine.py`
-  - metadata probe and live HLS pipeline lifecycle.
+  - live HLS pipeline lifecycle (opens the Streamlink stream, spawns ffmpeg, pumps bytes).
 - `src/clippiti/services/clipper.py`
   - stage preparation, preview frame extraction, clip export job creation.
 - `src/clippiti/services/recording.py`

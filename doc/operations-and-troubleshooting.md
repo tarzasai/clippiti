@@ -24,19 +24,20 @@ PYTHONPATH=src ./.venv/bin/python -m pytest -q
 
 ## Runtime Health Checklist
 
-- `streamlink` is installed and in `PATH`
+- `streamlink` Python package is importable in the active environment
 - `ffmpeg` is installed and in `PATH` (or `general.ffmpeg_path` is correct)
-- metadata probe succeeds
+- stream resolution succeeds
 - local playlist is created under `<workdir>/sessions/<session_id>/live.m3u8`
 
 ## Typical Failures
 
-- Metadata probe error:
+- Stream resolution error:
   - URL is offline/private/invalid
   - provider-specific authentication or restrictions
+  - invalid Streamlink arguments after `--`
 - Buffer startup timeout:
   - stream unavailable
-  - streamlink/ffmpeg invocation issue
+  - ffmpeg invocation issue
 - Playback issues:
   - mpv runtime or graphics driver issue
   - invalid mpv option override

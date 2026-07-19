@@ -2,20 +2,20 @@
 
 ## CLI Interface
 
-`clippiti <url> <quality> [options]`
+`clippiti <url> <quality> [options] [-- <streamlink args>]`
 
 Options:
 
-- `--sl`: additional Streamlink arguments
 - `--mpv`: additional mpv options (YAML mapping or key=value pairs)
 - `--config`: explicit config file path
 - `--workdir`: explicit runtime workdir path
 - `--verbose`: debug logging
+- everything after a `--` separator is forwarded to Streamlink's own argument parser
 
 Example (Twitch):
 
 ```bash
-clippiti https://www.twitch.tv/example_channel best --sl "--retry-max 5" --mpv "vf=hflip"
+clippiti https://www.twitch.tv/example_channel best --mpv "vf=hflip" -- --retry-max 5 --twitch-disable-ads
 ```
 
 Example (YouTube):
@@ -46,7 +46,7 @@ Default workdir:
 - `general`
   - `ffmpeg_path`, `segment_seconds`, `window_segments`, `controls_area`, `controls_resize_debounce_ms`, `mpv_options`
 - `streamlink`
-  - `default_args`
+  - `default_args` (string of Streamlink options, merged before any `--` passthrough args)
 - `clip`
   - `dir`, `default_duration`
 - `recording`

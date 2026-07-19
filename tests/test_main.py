@@ -53,12 +53,17 @@ def test_main_uses_presenting_wake_lock(monkeypatch, tmp_path) -> None:
   monkeypatch.setattr(main_mod, "normalize_config", lambda value: value)
   monkeypatch.setattr(main_mod, "save_config", lambda *_args, **_kwargs: None)
   monkeypatch.setattr(main_mod, "ensure_output_dirs", lambda *_args, **_kwargs: None)
-  monkeypatch.setattr(main_mod, "build_streamlink_command", lambda **_kwargs: ["streamlink", "url", "best"])
   monkeypatch.setattr(main_mod, "build_mpv_options", lambda **_kwargs: {})
+  monkeypatch.setattr(main_mod, "create_session", lambda *_args, **_kwargs: object())
   monkeypatch.setattr(
     main_mod,
-    "resolve_stream_metadata",
-    lambda **_kwargs: SimpleNamespace(plugin="plugin", author="author", category="category", title="title"),
+    "resolve_stream",
+    lambda **_kwargs: SimpleNamespace(
+      metadata=SimpleNamespace(plugin="plugin", author="author", category="category", title="title"),
+      stream=object(),
+      quality="best",
+      available=["best"],
+    ),
   )
 
   def fake_run_app(**kwargs):

@@ -3,20 +3,27 @@ import threading
 
 import clippiti.services.buffer_engine as be
 from clippiti.services.buffer_engine import SessionRuntime
-from clippiti.services.buffer_engine import StreamMetadata
+from clippiti.services.sl_session import StreamMetadata
 
 
-class _Stdout:
-  def close(self):
-    return None
+class _FakeStdin:
+  def __init__(self) -> None:
+    self.chunks: list[bytes] = []
+    self.closed = False
+
+  def write(self, data: bytes) -> None:
+    self.chunks.append(data)
+
+  def close(self) -> None:
+    self.closed = True
 
 
-class _Proc:
-  def __init__(self, poll_values=None, pid=111):
+class _FakeFfmpeg:
+  def __init__(self, poll_values=None, pid=200) -> None:
     self._poll_values = list(poll_values or [None])
     self.pid = pid
     self.returncode = None
-    self.stdout = _Stdout()
+    self.stdin = _FakeStdin()
     self.terminated = False
     self.killed = False
 
@@ -28,7 +35,7 @@ class _Proc:
       return val
     return self.returncode
 
-  def terminate(self):
+  def terminate(self) -> None:
     self.terminated = True
 
   def wait(self, timeout=None):
@@ -36,9 +43,30 @@ class _Proc:
       self.returncode = 0
     return self.returncode
 
-  def kill(self):
+  def kill(self) -> None:
     self.killed = True
     self.returncode = -9
+
+
+class _FakePump:
+  def __init__(self, poll_values=None) -> None:
+    self._poll_values = list(poll_values or [None])
+    self.error = None
+    self.started = False
+    self.stopped = False
+    self.returncode = None
+
+  def start(self) -> None:
+    self.started = True
+
+  def poll(self):
+    if self._poll_values:
+      self.returncode = self._poll_values.pop(0)
+      return self.returncode
+    return self.returncode
+
+  def stop(self, timeout: float = 3.0) -> None:
+    self.stopped = True
 
 
 def _runtime(tmp_path: Path) -> SessionRuntime:
@@ -54,6 +82,21 @@ def _runtime(tmp_path: Path) -> SessionRuntime:
     segment_seconds=5,
     window_segments=12,
   )
+
+
+def _install_pipeline_fakes(monkeypatch, *, write_playlist: bool, pump: _FakePump):
+  """Patch open_stream, StreamPump and ffmpeg Popen for pipeline tests."""
+  monkeypatch.setattr(be, "_stderr_log_path", lambda *a, **k: None)
+  monkeypatch.setattr(be, "open_stream", lambda stream, **k: (object(), b"prebuffer"))
+  monkeypatch.setattr(be, "StreamPump", lambda *a, **k: pump)
+
+  def fake_popen(cmd, **kwargs):
+    if write_playlist:
+      # ffmpeg's playlist path is the final argument.
+      Path(cmd[-1]).write_text("#EXTM3U\n", encoding="utf-8")
+    return _FakeFfmpeg()
+
+  monkeypatch.setattr(be.subprocess, "Popen", fake_popen)
 
 
 def test_buffer_seconds_property() -> None:
@@ -72,66 +115,17 @@ def test_buffer_seconds_property() -> None:
   assert runtime.buffer_seconds == 60
 
 
-def test_resolve_stream_metadata_success(monkeypatch) -> None:
-  class _RunResult:
-    returncode = 0
-    stderr = ""
-    stdout = '{"plugin":"x","metadata":{"author":"a","category":"c","title":"t"}}'
-
-  monkeypatch.setattr(be.subprocess, "run", lambda *a, **k: _RunResult())
-  meta = be.resolve_stream_metadata("https://x", "--a 1", "--b 2")
-  assert meta.plugin == "x"
-  assert meta.author == "a"
-
-
-def test_resolve_stream_metadata_failure(monkeypatch) -> None:
-  class _RunResult:
-    returncode = 1
-    stderr = "boom"
-    stdout = ""
-
-  monkeypatch.setattr(be.subprocess, "run", lambda *a, **k: _RunResult())
-  try:
-    be.resolve_stream_metadata("https://x", "", "")
-    assert False
-  except RuntimeError as exc:
-    assert "boom" in str(exc)
-
-
-def test_resolve_stream_metadata_invalid_json(monkeypatch) -> None:
-  class _RunResult:
-    returncode = 0
-    stderr = ""
-    stdout = "not-json"
-
-  monkeypatch.setattr(be.subprocess, "run", lambda *a, **k: _RunResult())
-  try:
-    be.resolve_stream_metadata("https://x", "", "")
-    assert False
-  except RuntimeError as exc:
-    assert "invalid JSON" in str(exc)
-
-
 def test_start_pipeline_happy_path(tmp_path: Path, monkeypatch) -> None:
   meta = StreamMetadata(plugin="x", author="a", category="c", title="t")
-
-  procs = [_Proc(pid=101), _Proc(pid=102)]
-
-  def fake_popen(cmd, **kwargs):
-    proc = procs.pop(0)
-    if cmd[0] != "streamlink":
-      Path(cmd[-1]).write_text("#EXTM3U\n", encoding="utf-8")
-    return proc
-
-  monkeypatch.setattr(be.subprocess, "Popen", fake_popen)
-  monkeypatch.setattr(be, "_stderr_log_path", lambda *a, **k: None)
+  pump = _FakePump(poll_values=[None])
+  _install_pipeline_fakes(monkeypatch, write_playlist=True, pump=pump)
 
   runtime = be.start_single_session_pipeline(
     workdir=tmp_path,
     ffmpeg_path="ffmpeg",
     url="https://x",
     quality="best",
-    streamlink_cmd=["streamlink", "--stdout", "https://x", "best"],
+    stream=object(),
     segment_seconds=5,
     window_segments=12,
     metadata=meta,
@@ -139,6 +133,7 @@ def test_start_pipeline_happy_path(tmp_path: Path, monkeypatch) -> None:
 
   assert runtime.status == "live"
   assert runtime.playlist_path.exists()
+  assert pump.started is True
 
 
 def test_start_pipeline_cancel_before_launch(tmp_path: Path) -> None:
@@ -152,7 +147,7 @@ def test_start_pipeline_cancel_before_launch(tmp_path: Path) -> None:
       ffmpeg_path="ffmpeg",
       url="https://x",
       quality="best",
-      streamlink_cmd=["streamlink", "--stdout", "https://x", "best"],
+      stream=object(),
       segment_seconds=5,
       window_segments=12,
       metadata=meta,
@@ -165,12 +160,13 @@ def test_start_pipeline_cancel_before_launch(tmp_path: Path) -> None:
 
 def test_terminate_runtime_handles_procs(tmp_path: Path) -> None:
   runtime = _runtime(tmp_path)
-  runtime.streamlink_proc = _Proc(poll_values=[None])
-  runtime.ffmpeg_proc = _Proc(poll_values=[None])
+  pump = _FakePump(poll_values=[None])
+  runtime.stream_pump = pump
+  runtime.ffmpeg_proc = _FakeFfmpeg(poll_values=[None])
 
   be.terminate_runtime(runtime)
 
-  assert runtime.streamlink_proc.terminated is True
+  assert pump.stopped is True
   assert runtime.ffmpeg_proc.terminated is True
 
 
@@ -208,15 +204,10 @@ def test_stderr_target_file(tmp_path: Path) -> None:
   assert target is fp
 
 
-def test_start_pipeline_streamlink_exits_early(tmp_path: Path, monkeypatch) -> None:
+def test_start_pipeline_stream_ends_early(tmp_path: Path, monkeypatch) -> None:
   meta = StreamMetadata(plugin="x", author="a", category="c", title="t")
-  procs = [_Proc(poll_values=[1], pid=1), _Proc(poll_values=[None], pid=2)]
-
-  def fake_popen(cmd, **kwargs):
-    return procs.pop(0)
-
-  monkeypatch.setattr(be.subprocess, "Popen", fake_popen)
-  monkeypatch.setattr(be, "_stderr_log_path", lambda *a, **k: None)
+  pump = _FakePump(poll_values=[0])  # already finished
+  _install_pipeline_fakes(monkeypatch, write_playlist=False, pump=pump)
   monkeypatch.setattr(be.time, "sleep", lambda *_: None)
 
   try:
@@ -225,7 +216,7 @@ def test_start_pipeline_streamlink_exits_early(tmp_path: Path, monkeypatch) -> N
       ffmpeg_path="ffmpeg",
       url="https://x",
       quality="best",
-      streamlink_cmd=["streamlink", "--stdout", "https://x", "best"],
+      stream=object(),
       segment_seconds=5,
       window_segments=12,
       metadata=meta,
@@ -233,19 +224,21 @@ def test_start_pipeline_streamlink_exits_early(tmp_path: Path, monkeypatch) -> N
     )
     assert False
   except RuntimeError as exc:
-    assert "streamlink exited" in str(exc)
+    assert "stream ended" in str(exc)
 
 
 def test_start_pipeline_ffmpeg_exits_early(tmp_path: Path, monkeypatch) -> None:
   meta = StreamMetadata(plugin="x", author="a", category="c", title="t")
-  procs = [_Proc(poll_values=[None], pid=1), _Proc(poll_values=[2], pid=2)]
+  pump = _FakePump(poll_values=[None, None, None])
+  monkeypatch.setattr(be, "_stderr_log_path", lambda *a, **k: None)
+  monkeypatch.setattr(be, "open_stream", lambda stream, **k: (object(), b"prebuffer"))
+  monkeypatch.setattr(be, "StreamPump", lambda *a, **k: pump)
+  monkeypatch.setattr(be.time, "sleep", lambda *_: None)
 
   def fake_popen(cmd, **kwargs):
-    return procs.pop(0)
+    return _FakeFfmpeg(poll_values=[2])
 
   monkeypatch.setattr(be.subprocess, "Popen", fake_popen)
-  monkeypatch.setattr(be, "_stderr_log_path", lambda *a, **k: None)
-  monkeypatch.setattr(be.time, "sleep", lambda *_: None)
 
   try:
     be.start_single_session_pipeline(
@@ -253,7 +246,7 @@ def test_start_pipeline_ffmpeg_exits_early(tmp_path: Path, monkeypatch) -> None:
       ffmpeg_path="ffmpeg",
       url="https://x",
       quality="best",
-      streamlink_cmd=["streamlink", "--stdout", "https://x", "best"],
+      stream=object(),
       segment_seconds=5,
       window_segments=12,
       metadata=meta,
@@ -266,10 +259,8 @@ def test_start_pipeline_ffmpeg_exits_early(tmp_path: Path, monkeypatch) -> None:
 
 def test_start_pipeline_timeout(tmp_path: Path, monkeypatch) -> None:
   meta = StreamMetadata(plugin="x", author="a", category="c", title="t")
-  procs = [_Proc(poll_values=[None, None, None], pid=1), _Proc(poll_values=[None, None, None], pid=2)]
-
-  def fake_popen(cmd, **kwargs):
-    return procs.pop(0)
+  pump = _FakePump(poll_values=[None, None, None])
+  _install_pipeline_fakes(monkeypatch, write_playlist=False, pump=pump)
 
   t = {"n": 0.0}
 
@@ -277,8 +268,6 @@ def test_start_pipeline_timeout(tmp_path: Path, monkeypatch) -> None:
     t["n"] += 1.0
     return t["n"]
 
-  monkeypatch.setattr(be.subprocess, "Popen", fake_popen)
-  monkeypatch.setattr(be, "_stderr_log_path", lambda *a, **k: None)
   monkeypatch.setattr(be.time, "sleep", lambda *_: None)
   monkeypatch.setattr(be.time, "monotonic", fake_monotonic)
 
@@ -288,7 +277,7 @@ def test_start_pipeline_timeout(tmp_path: Path, monkeypatch) -> None:
       ffmpeg_path="ffmpeg",
       url="https://x",
       quality="best",
-      streamlink_cmd=["streamlink", "--stdout", "https://x", "best"],
+      stream=object(),
       segment_seconds=5,
       window_segments=12,
       metadata=meta,
@@ -321,20 +310,6 @@ def test_pid_is_alive_nonpositive() -> None:
   assert be._pid_is_alive(0) is False
 
 
-def test_resolve_stream_metadata_invalid_shape(monkeypatch) -> None:
-  class _RunResult:
-    returncode = 0
-    stderr = ""
-    stdout = "[]"
-
-  monkeypatch.setattr(be.subprocess, "run", lambda *a, **k: _RunResult())
-  try:
-    be.resolve_stream_metadata("https://x", "", "")
-    assert False
-  except RuntimeError as exc:
-    assert "format" in str(exc)
-
-
 def test_child_process_kwargs_skips_preexec_in_non_main_thread(monkeypatch) -> None:
   monkeypatch.setattr(be.os, "name", "posix", raising=False)
 
@@ -365,17 +340,13 @@ def test_cleanup_orphan_keeps_live_owner(tmp_path: Path, monkeypatch) -> None:
 
 def test_start_pipeline_cancel_while_waiting(tmp_path: Path, monkeypatch) -> None:
   meta = StreamMetadata(plugin="x", author="a", category="c", title="t")
-  procs = [_Proc(poll_values=[None, None], pid=1), _Proc(poll_values=[None, None], pid=2)]
+  pump = _FakePump(poll_values=[None, None])
   cancel = threading.Event()
-
-  def fake_popen(cmd, **kwargs):
-    return procs.pop(0)
+  _install_pipeline_fakes(monkeypatch, write_playlist=False, pump=pump)
 
   def fake_sleep(_):
     cancel.set()
 
-  monkeypatch.setattr(be.subprocess, "Popen", fake_popen)
-  monkeypatch.setattr(be, "_stderr_log_path", lambda *a, **k: None)
   monkeypatch.setattr(be.time, "sleep", fake_sleep)
 
   try:
@@ -384,7 +355,7 @@ def test_start_pipeline_cancel_while_waiting(tmp_path: Path, monkeypatch) -> Non
       ffmpeg_path="ffmpeg",
       url="https://x",
       quality="best",
-      streamlink_cmd=["streamlink", "--stdout", "https://x", "best"],
+      stream=object(),
       segment_seconds=5,
       window_segments=12,
       metadata=meta,

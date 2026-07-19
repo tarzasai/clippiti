@@ -245,6 +245,7 @@ def _spawn_ffmpeg(cmd: list[str], stderr_path: Path | None) -> subprocess.Popen:
   try:
     return subprocess.Popen(
       cmd,
+      stdin=subprocess.DEVNULL,
       stdout=subprocess.DEVNULL,
       stderr=stderr_target,
       text=False,
@@ -279,6 +280,7 @@ def _remux(src: Path, dst: Path, ffmpeg_path: str, stderr_path: Path | None) -> 
     proc = subprocess.run(
       cmd,
       check=False,
+      stdin=subprocess.DEVNULL,
       stdout=subprocess.DEVNULL,
       stderr=stderr_target,
       timeout=120,

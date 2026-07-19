@@ -190,6 +190,8 @@ class ClipRangeDialog(QDialog):
     previews_layout.addWidget(QLabel("End frame"), 0, 1)
     previews_layout.addWidget(self._start_preview, 1, 0)
     previews_layout.addWidget(self._end_preview, 1, 1)
+    previews_layout.setColumnStretch(0, 1)
+    previews_layout.setColumnStretch(1, 1)
 
     slider_layout = QVBoxLayout()
     slider_layout.setContentsMargins(0, 0, 0, 0)
@@ -431,8 +433,36 @@ class ClipWorkflow(QObject):
       preview_timer = QTimer(dialog)
       preview_timer.setSingleShot(True)
       preview_timer.setInterval(120)
-      preview_timer.timeout.connect(lambda: self.refresh_clip_previews(dialog, stage))
-      dialog.on_range_changed(lambda: preview_timer.start())
+      refresh_state = {"running": False, "dirty": False}
+
+      def run_preview_refresh() -> None:
+        # Guard against re-entrancy: refresh_clip_previews blocks on a nested
+        # event loop, during which more range changes can arrive. Coalesce them
+        # and always finish on the latest selected range.
+        if refresh_state["running"]:
+          refresh_state["dirty"] = True
+          return
+        refresh_state["running"] = True
+        try:
+          while True:
+            refresh_state["dirty"] = False
+            self.refresh_clip_previews(dialog, stage)
+            if not refresh_state["dirty"]:
+              break
+        finally:
+          refresh_state["running"] = False
+
+      def on_range_changed() -> None:
+        # Throttle rather than debounce: the slider is quantized to whole
+        # seconds, so this fires at most once per second crossed. Update during
+        # the drag instead of only after the handle is released.
+        if refresh_state["running"]:
+          refresh_state["dirty"] = True
+        elif not preview_timer.isActive():
+          preview_timer.start()
+
+      preview_timer.timeout.connect(run_preview_refresh)
+      dialog.on_range_changed(on_range_changed)
 
       self.refresh_clip_previews(dialog, stage)
       if not self._is_player_muted():

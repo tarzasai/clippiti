@@ -1,7 +1,7 @@
 # Architecture Overview
 
 Clippiti is a desktop application built with PyQt6 and python-mpv.
-It uses Streamlink and ffmpeg to build a local rolling HLS buffer, then plays the local playlist through mpv.
+It uses the Streamlink Python API and ffmpeg to build a local rolling HLS buffer, then plays the local playlist through mpv.
 
 ## High-Level Structure
 
@@ -14,8 +14,9 @@ flowchart TD
     APP --> REC[Recording Service]
     APP --> RQ[Remux Queue]
 
-    BE --> SL[Streamlink]
-    SL --> FF[ffmpeg]
+    BE --> SL[Streamlink API]
+    SL --> PUMP[Stream pump thread]
+    PUMP --> FF[ffmpeg]
     FF --> HLS[/local live.m3u8 + segments/]
     HLS --> MPV[mpv via python-mpv]
 
@@ -33,12 +34,12 @@ C4Context
     title Clippiti Container Diagram
     Person(user, "User", "Watches, clips, records live streams")
     System(clippiti, "Clippiti Desktop App", "PyQt6 application")
-    System_Ext(streamlink, "Streamlink", "Resolves and fetches stream data")
+    System_Ext(streamlink, "Streamlink", "Python library: resolves plugins and fetches stream data")
     System_Ext(ffmpeg, "ffmpeg", "Builds HLS buffer and handles remux/export")
     System_Ext(mpv, "mpv", "Playback engine via python-mpv")
 
     Rel(user, clippiti, "Uses")
-    Rel(clippiti, streamlink, "Requests metadata + stream bytes")
+    Rel(clippiti, streamlink, "Calls in-process for metadata + stream bytes")
     Rel(clippiti, ffmpeg, "Runs for buffering/recording/clipping")
     Rel(clippiti, mpv, "Controls playback")
 
@@ -48,7 +49,7 @@ C4Context
 ## Key Design Choices
 
 - Startup is asynchronous so the window can open while pipeline initialization is in progress.
-- The stream processing path is explicit: Streamlink stdout -> ffmpeg HLS output -> local playlist.
+- The stream processing path is explicit: Streamlink API stream -> pump thread -> ffmpeg stdin -> HLS output -> local playlist.
 - Clipping and recording are service-driven and isolated from UI widgets.
 - Post-processing (remux/export) uses a queue service to avoid overlapping ffmpeg process control.
 

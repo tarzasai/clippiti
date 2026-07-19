@@ -8,14 +8,14 @@ This document summarizes the main application workflows.
 sequenceDiagram
     participant User
     participant Main as __main__.py
-    participant Probe as Metadata Probe
+    participant SL as Streamlink API
     participant Buffer as Buffer Engine
     participant UI as UI App
 
     User->>Main: clippiti <url> <quality>
     Main->>Main: load/normalize config
-    Main->>Probe: resolve_stream_metadata(url, args)
-    Probe-->>Main: plugin + author + title + category
+    Main->>SL: resolve_stream(url, quality, args)
+    SL-->>Main: stream + plugin + author + title + category
     Main->>UI: run_app(startup_task=...)
     UI->>Buffer: start_single_session_pipeline(...)
     Buffer-->>UI: runtime with local playlist path
@@ -66,7 +66,7 @@ sequenceDiagram
 flowchart TD
     A[Window close / app exit] --> B[Cancel startup if pending]
     B --> C[Terminate recording/remux services]
-    C --> D[Terminate streamlink + ffmpeg runtime processes]
+    C --> D[Stop stream pump + terminate ffmpeg runtime process]
     D --> E[Cleanup session artifacts]
     E --> F[Exit]
 ```

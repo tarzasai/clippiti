@@ -1,10 +1,9 @@
-"""Deliverable 2 buffer engine: metadata probe + single-session rolling HLS pipeline."""
+"""Buffer engine: single-session rolling HLS pipeline (Streamlink API -> ffmpeg)."""
 
 from dataclasses import dataclass
 import logging
 from pathlib import Path
 from signal import SIGTERM
-import json
 import os
 import shutil
 import subprocess
@@ -12,18 +11,11 @@ import threading
 import time
 import ctypes
 
-from .streamlink_args import build_streamlink_metadata_command
+from .sl_session import StreamMetadata, StreamPump, open_stream
+from streamlink.stream.stream import Stream
 
 
 log = logging.getLogger("clippiti")
-
-
-@dataclass
-class StreamMetadata:
-  plugin: str
-  author: str
-  category: str
-  title: str
 
 
 @dataclass
@@ -39,9 +31,8 @@ class SessionRuntime:
   segment_seconds: int
   window_segments: int
   status: str = "loading"
-  streamlink_proc: subprocess.Popen | None = None
+  stream_pump: StreamPump | None = None
   ffmpeg_proc: subprocess.Popen | None = None
-  streamlink_stderr_path: Path | None = None
   ffmpeg_stderr_path: Path | None = None
 
   @property
@@ -91,59 +82,13 @@ def _stderr_target(stderr_path: Path | None):
   return stderr_fp, stderr_fp
 
 
-def resolve_stream_metadata(url: str, default_args: str, cli_args: str, timeout_s: int = 25) -> StreamMetadata:
-  cmd = build_streamlink_metadata_command(url, default_args, cli_args)
-  log.debug("buffer_engine: metadata command built: %s", cmd)
-  log.debug("buffer_engine: running metadata probe with timeout=%ss", max(1, timeout_s))
-  proc = subprocess.run(
-    cmd,
-    check=False,
-    capture_output=True,
-    text=True,
-    timeout=max(1, timeout_s),
-  )
-  log.debug("buffer_engine: metadata probe exit code: %s", proc.returncode)
-
-  if proc.returncode != 0:
-    err = (proc.stderr or proc.stdout or "streamlink metadata probe failed").strip()
-    log.debug("buffer_engine: metadata probe failure output: %s", err)
-    raise RuntimeError(err)
-
-  try:
-    payload = json.loads(proc.stdout)
-  except json.JSONDecodeError as exc:
-    raise RuntimeError("streamlink --json returned invalid JSON") from exc
-
-  if not isinstance(payload, dict):
-    raise RuntimeError("streamlink --json response format is invalid")
-
-  plugin = str(payload.get("plugin", "unknown") or "unknown")
-  meta = payload.get("metadata", {})
-  if not isinstance(meta, dict):
-    meta = {}
-
-  author = str(meta.get("author", "unknown") or "unknown")
-  category = str(meta.get("category", "unknown") or "unknown")
-  title = str(meta.get("title", url) or url)
-
-  log.debug(
-    "buffer_engine: metadata resolved: plugin=%s author=%s category=%s title=%s",
-    plugin,
-    author,
-    category,
-    title,
-  )
-
-  return StreamMetadata(plugin=plugin, author=author, category=category, title=title)
-
-
 def start_single_session_pipeline(
   *,
   workdir: Path,
   ffmpeg_path: str,
   url: str,
   quality: str,
-  streamlink_cmd: list[str],
+  stream: Stream,
   segment_seconds: int,
   window_segments: int,
   metadata: StreamMetadata,
@@ -158,10 +103,8 @@ def start_single_session_pipeline(
   segment_dir.mkdir(parents=True, exist_ok=True)
   (segment_dir / "owner.pid").write_text(f"{os.getpid()}\n", encoding="utf-8")
   playlist_path = segment_dir / "live.m3u8"
-  streamlink_stderr_path = _stderr_log_path(segment_dir, "streamlink.stderr.log")
   ffmpeg_stderr_path = _stderr_log_path(segment_dir, "ffmpeg.stderr.log")
 
-  streamlink_stderr_target, streamlink_stderr_fp = _stderr_target(streamlink_stderr_path)
   ffmpeg_stderr_target, ffmpeg_stderr_fp = _stderr_target(ffmpeg_stderr_path)
 
   ffmpeg_cmd = [
@@ -188,7 +131,6 @@ def start_single_session_pipeline(
   ]
 
   log.debug("buffer_engine: starting pipeline session_id=%s segment_dir=%s", session_id, segment_dir)
-  log.debug("buffer_engine: pipeline streamlink command built: %s", streamlink_cmd)
   log.debug("buffer_engine: ffmpeg command built: %s", ffmpeg_cmd)
 
   if cancel_event is not None and cancel_event.is_set():
@@ -196,33 +138,42 @@ def start_single_session_pipeline(
     shutil.rmtree(segment_dir, ignore_errors=True)
     raise RuntimeError("buffer pipeline startup cancelled")
 
-  streamlink_proc = None
+  # Open the Streamlink stream first so an offline/broken stream fails fast
+  # before we spawn ffmpeg.
+  stream_fd, prebuffer = open_stream(stream)
+  log.debug("buffer_engine: stream opened, prebuffer=%d bytes", len(prebuffer))
+
   ffmpeg_proc = None
+  stream_pump = None
 
   try:
     child_kwargs = _child_process_kwargs()
-    streamlink_proc = subprocess.Popen(
-      streamlink_cmd,
-      stdout=subprocess.PIPE,
-      stderr=streamlink_stderr_target,
-      **child_kwargs,
-    )
-    if streamlink_proc.stdout is None:
-      raise RuntimeError("failed to capture streamlink stdout")
-    log.debug("buffer_engine: streamlink process started pid=%s", streamlink_proc.pid)
-
     ffmpeg_proc = subprocess.Popen(
       ffmpeg_cmd,
-      stdin=streamlink_proc.stdout,
+      stdin=subprocess.PIPE,
       stdout=subprocess.DEVNULL,
       stderr=ffmpeg_stderr_target,
       **child_kwargs,
     )
+    if ffmpeg_proc.stdin is None:
+      raise RuntimeError("failed to open ffmpeg stdin")
     log.debug("buffer_engine: ffmpeg process started pid=%s", ffmpeg_proc.pid)
-    streamlink_proc.stdout.close()
+
+    stream_pump = StreamPump(stream_fd, ffmpeg_proc.stdin, prebuffer=prebuffer)
+    stream_pump.start()
+    log.debug("buffer_engine: stream pump started")
+  except Exception:
+    try:
+      stream_fd.close()
+    except Exception:
+      pass
+    if ffmpeg_proc is not None:
+      try:
+        ffmpeg_proc.kill()
+      except Exception:
+        pass
+    raise
   finally:
-    if streamlink_stderr_fp is not None:
-      streamlink_stderr_fp.close()
     if ffmpeg_stderr_fp is not None:
       ffmpeg_stderr_fp.close()
 
@@ -238,9 +189,8 @@ def start_single_session_pipeline(
     segment_seconds=segment_seconds,
     window_segments=window_segments,
     status="loading",
-    streamlink_proc=streamlink_proc,
+    stream_pump=stream_pump,
     ffmpeg_proc=ffmpeg_proc,
-    streamlink_stderr_path=streamlink_stderr_path,
     ffmpeg_stderr_path=ffmpeg_stderr_path,
   )
 
@@ -256,10 +206,9 @@ def start_single_session_pipeline(
       runtime.status = "live"
       log.debug("buffer_engine: playlist became available size=%s", playlist_path.stat().st_size)
       return runtime
-    if streamlink_proc.poll() is not None:
-      message = "streamlink exited before playlist became available"
-      log.debug("buffer_engine: streamlink exited early code=%s", streamlink_proc.returncode)
-      raise RuntimeError(message)
+    if stream_pump.poll() is not None:
+      log.debug("buffer_engine: stream pump ended early code=%s error=%s", stream_pump.poll(), stream_pump.error)
+      raise RuntimeError("stream ended before playlist became available")
     if ffmpeg_proc.poll() is not None:
       log.debug("buffer_engine: ffmpeg exited early code=%s", ffmpeg_proc.returncode)
       raise RuntimeError("ffmpeg exited before playlist became available")
@@ -270,41 +219,43 @@ def start_single_session_pipeline(
 
 
 def terminate_runtime(runtime: SessionRuntime) -> None:
-  procs = [runtime.ffmpeg_proc, runtime.streamlink_proc]
   log.debug("buffer_engine: terminating runtime for segment_dir=%s", runtime.segment_dir)
 
-  for proc in procs:
-    if proc is None or proc.poll() is not None:
-      continue
+  # Stop the stream pump first so it stops feeding ffmpeg and closes its stdin.
+  if runtime.stream_pump is not None:
     try:
-      log.debug("buffer_engine: sending terminate to pid=%s", proc.pid)
-      proc.terminate()
+      log.debug("buffer_engine: stopping stream pump")
+      runtime.stream_pump.stop()
     except Exception:
-      log.debug("buffer_engine: terminate failed for pid=%s", proc.pid, exc_info=True)
+      log.debug("buffer_engine: stream pump stop failed", exc_info=True)
 
-  for proc in procs:
-    if proc is None:
-      continue
-    if proc.poll() is not None:
-      log.debug("buffer_engine: process already exited pid=%s code=%s", proc.pid, proc.returncode)
-      continue
-    try:
-      proc.wait(timeout=3.0)
-      log.debug("buffer_engine: process exited after terminate pid=%s code=%s", proc.pid, proc.returncode)
-      continue
-    except Exception:
-      log.debug("buffer_engine: process did not exit after terminate pid=%s", proc.pid, exc_info=True)
-    try:
-      log.debug("buffer_engine: sending kill to pid=%s", proc.pid)
-      proc.kill()
-    except Exception:
-      log.debug("buffer_engine: kill failed for pid=%s", proc.pid, exc_info=True)
-    try:
-      proc.wait(timeout=1.0)
-    except Exception:
-      log.debug("buffer_engine: process still did not exit after kill pid=%s", proc.pid, exc_info=True)
-    else:
-      log.debug("buffer_engine: process exited after kill pid=%s code=%s", proc.pid, proc.returncode)
+  proc = runtime.ffmpeg_proc
+  if proc is None or proc.poll() is not None:
+    return
+
+  try:
+    log.debug("buffer_engine: sending terminate to pid=%s", proc.pid)
+    proc.terminate()
+  except Exception:
+    log.debug("buffer_engine: terminate failed for pid=%s", proc.pid, exc_info=True)
+
+  try:
+    proc.wait(timeout=3.0)
+    log.debug("buffer_engine: process exited after terminate pid=%s code=%s", proc.pid, proc.returncode)
+    return
+  except Exception:
+    log.debug("buffer_engine: process did not exit after terminate pid=%s", proc.pid, exc_info=True)
+  try:
+    log.debug("buffer_engine: sending kill to pid=%s", proc.pid)
+    proc.kill()
+  except Exception:
+    log.debug("buffer_engine: kill failed for pid=%s", proc.pid, exc_info=True)
+  try:
+    proc.wait(timeout=1.0)
+  except Exception:
+    log.debug("buffer_engine: process still did not exit after kill pid=%s", proc.pid, exc_info=True)
+  else:
+    log.debug("buffer_engine: process exited after kill pid=%s code=%s", proc.pid, proc.returncode)
 
 
 def cleanup_runtime_artifacts(runtime: SessionRuntime) -> None:
