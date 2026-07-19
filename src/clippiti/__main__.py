@@ -73,7 +73,10 @@ def build_parser() -> argparse.ArgumentParser:
     ),
   )
   parser.add_argument("url", help="Stream URL to open")
-  parser.add_argument("quality", help="Desired stream quality (e.g. best, worst, 720p)")
+  parser.add_argument(
+    "quality",
+    help="Desired stream quality; accepts a comma-separated fallback list, e.g. '720p,best'",
+  )
   parser.add_argument(
     "--config",
     default=None,
@@ -202,7 +205,7 @@ def main(argv: list[str] | None = None) -> int:
       workdir=workdir,
       ffmpeg_path=ffmpeg_path,
       url=args.url,
-      quality=args.quality,
+      quality=resolved.quality,
       stream=resolved.stream,
       segment_seconds=segment_seconds,
       window_segments=window_segments,
@@ -214,7 +217,7 @@ def main(argv: list[str] | None = None) -> int:
     nonlocal runtime
     runtime = ready_runtime
     log.info("status: %s", runtime.status)
-    log.info("playlist: %s", runtime.playlist_path)
+    log.info("playlist: %s (quality: %s)", runtime.playlist_path, runtime.desired_quality)
     log.debug("buffer_seconds: %s", runtime.buffer_seconds)
     if runtime.ffmpeg_stderr_path is not None:
       log.debug("ffmpeg_stderr: %s", runtime.ffmpeg_stderr_path)

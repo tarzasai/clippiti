@@ -113,7 +113,8 @@ PYTHONPATH=src ./.venv/bin/python -m clippiti <url> <quality>
 ```text
 positional:
   url                      Stream URL to open
-  quality                  Desired stream quality (e.g. best, worst, 720p)
+  quality                  Desired stream quality; accepts a comma-separated
+                           fallback list, e.g. best, worst, 720p, "720p,best"
 
 optional:
   --mpv TEXT               Additional mpv options (YAML or key=value)

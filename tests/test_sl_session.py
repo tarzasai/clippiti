@@ -104,6 +104,40 @@ def test_resolve_stream_quality_missing(monkeypatch) -> None:
   assert "not available" in str(exc.value)
 
 
+def test_resolve_stream_quality_fallback_list(monkeypatch) -> None:
+  _patch_parse(monkeypatch)
+  streams = {"480p": object(), "best": object()}
+  plugin = _FakePlugin(streams, {})
+  session = _FakeSession(_FakePluginClass(plugin))
+
+  # 720p is unavailable, so it falls back to best.
+  resolved = ss.resolve_stream(session, "https://twitch.tv/x", "720p,best", [])
+  assert resolved.quality == "best"
+  assert resolved.stream is streams["best"]
+
+
+def test_resolve_stream_quality_fallback_first_wins(monkeypatch) -> None:
+  _patch_parse(monkeypatch)
+  streams = {"720p": object(), "480p": object(), "best": object()}
+  plugin = _FakePlugin(streams, {})
+  session = _FakeSession(_FakePluginClass(plugin))
+
+  resolved = ss.resolve_stream(session, "https://twitch.tv/x", "720p, best", [])
+  assert resolved.quality == "720p"
+  assert resolved.stream is streams["720p"]
+
+
+def test_resolve_stream_quality_list_none_available(monkeypatch) -> None:
+  _patch_parse(monkeypatch)
+  streams = {"1080p": object(), "worst": object()}
+  plugin = _FakePlugin(streams, {})
+  session = _FakeSession(_FakePluginClass(plugin))
+
+  with pytest.raises(RuntimeError) as exc:
+    ss.resolve_stream(session, "https://twitch.tv/x", "720p,480p", [])
+  assert "not available" in str(exc.value)
+
+
 def test_resolve_stream_no_streams(monkeypatch) -> None:
   _patch_parse(monkeypatch)
   plugin = _FakePlugin({}, {})

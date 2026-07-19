@@ -151,8 +151,14 @@ def resolve_stream(
   if not streams:
     raise RuntimeError(f"no playable streams found on this URL: {url}")
 
-  wanted = quality.lower()
-  if wanted not in streams:
+  # Streamlink accepts a comma-separated priority list, e.g. "720p,best": each
+  # candidate is tried in order and the first available one is used.
+  candidates = [part.strip().lower() for part in quality.split(",") if part.strip()]
+  if not candidates:
+    candidates = ["best"]
+
+  chosen = next((cand for cand in candidates if cand in streams), None)
+  if chosen is None:
     available = ", ".join(sorted(streams))
     raise RuntimeError(f"quality {quality!r} is not available. Available: {available}")
 
@@ -174,8 +180,8 @@ def resolve_stream(
 
   return ResolvedStream(
     metadata=metadata,
-    stream=streams[wanted],
-    quality=wanted,
+    stream=streams[chosen],
+    quality=chosen,
     available=sorted(streams),
   )
 

@@ -4,6 +4,9 @@
 
 `clippiti <url> <quality> [options] [-- <streamlink args>]`
 
+`<quality>` accepts a comma-separated fallback list (e.g. `720p,best`); each
+candidate is tried in order and the first available stream is used.
+
 Options:
 
 - `--mpv`: additional mpv options (YAML mapping or key=value pairs)
