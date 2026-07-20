@@ -25,7 +25,7 @@ from streamlink_cli.argparser import (
   setup_plugin_options,
   setup_session_options,
 )
-from streamlink_cli.constants import PLUGIN_DIRS
+from streamlink_cli.constants import CONFIG_FILES, PLUGIN_DIRS
 
 log = logging.getLogger("clippiti")
 
@@ -109,6 +109,35 @@ def parse_streamlink_tokens(session: Streamlink, tokens: list[str]):
   return args
 
 
+def _streamlink_config_tokens(pluginname: str, tokens: list[str]) -> list[str]:
+  """Return ``@file`` argparse tokens for Streamlink's config files.
+
+  Mirrors the ``streamlink`` command: it loads the first existing main config
+  (e.g. ``~/.config/streamlink/config``) and the first existing plugin-specific
+  config (``config.<pluginname>``), where per-plugin credentials are typically
+  stored. Skipped entirely if ``--no-config`` is passed through.
+  """
+  if "--no-config" in tokens:
+    return []
+
+  config_tokens: list[str] = []
+
+  for config_file in CONFIG_FILES:
+    if config_file.is_file():
+      config_tokens.append(f"@{config_file}")
+      break
+
+  for config_file in CONFIG_FILES:
+    plugin_config = config_file.with_name(f"{config_file.name}.{pluginname}")
+    if plugin_config.is_file():
+      config_tokens.append(f"@{plugin_config}")
+      break
+
+  if config_tokens:
+    log.debug("streamlink: loading config files %s", config_tokens)
+  return config_tokens
+
+
 def resolve_stream(
   session: Streamlink,
   url: str,
@@ -120,19 +149,22 @@ def resolve_stream(
   This performs the network plugin probe once; the returned :class:`Stream`
   should later be opened with :func:`open_stream` on the thread that consumes it.
   """
-  args = parse_streamlink_tokens(session, tokens)
-
-  try:
-    setup_session_options(session, args)
-  except Exception as exc:
-    raise RuntimeError(f"failed to apply Streamlink options: {exc}") from exc
-
+  # Resolve the plugin first (cached) so the matching per-plugin config file can
+  # be loaded alongside the main config and the CLI tokens.
   try:
     pluginname, pluginclass, resolved_url = session.resolve_url(url)
   except NoPluginError:
     raise RuntimeError(f"no Streamlink plugin can handle URL: {url}") from None
   except PluginError as exc:
     raise RuntimeError(str(exc)) from exc
+
+  config_tokens = _streamlink_config_tokens(pluginname, tokens)
+  args = parse_streamlink_tokens(session, config_tokens + tokens)
+
+  try:
+    setup_session_options(session, args)
+  except Exception as exc:
+    raise RuntimeError(f"failed to apply Streamlink options: {exc}") from exc
 
   try:
     options = setup_plugin_options(session, args, pluginname, pluginclass)

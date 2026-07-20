@@ -68,6 +68,39 @@ def _patch_parse(monkeypatch):
   monkeypatch.setattr(ss, "setup_plugin_options", lambda *a, **k: object())
 
 
+def test_streamlink_config_tokens(monkeypatch, tmp_path) -> None:
+  main_cfg = tmp_path / "config"
+  main_cfg.write_text("hls-live-edge=6\n", encoding="utf-8")
+  plugin_cfg = tmp_path / "config.twitch"
+  plugin_cfg.write_text("twitch-disable-ads\n", encoding="utf-8")
+  monkeypatch.setattr(ss, "CONFIG_FILES", [main_cfg])
+
+  tokens = ss._streamlink_config_tokens("twitch", [])
+  assert tokens == [f"@{main_cfg}", f"@{plugin_cfg}"]
+
+
+def test_streamlink_config_tokens_no_plugin_config(monkeypatch, tmp_path) -> None:
+  main_cfg = tmp_path / "config"
+  main_cfg.write_text("hls-live-edge=6\n", encoding="utf-8")
+  monkeypatch.setattr(ss, "CONFIG_FILES", [main_cfg])
+
+  tokens = ss._streamlink_config_tokens("twitch", [])
+  assert tokens == [f"@{main_cfg}"]
+
+
+def test_streamlink_config_tokens_no_config_flag(monkeypatch, tmp_path) -> None:
+  main_cfg = tmp_path / "config"
+  main_cfg.write_text("hls-live-edge=6\n", encoding="utf-8")
+  monkeypatch.setattr(ss, "CONFIG_FILES", [main_cfg])
+
+  assert ss._streamlink_config_tokens("twitch", ["--no-config"]) == []
+
+
+def test_streamlink_config_tokens_none_present(monkeypatch, tmp_path) -> None:
+  monkeypatch.setattr(ss, "CONFIG_FILES", [tmp_path / "config"])
+  assert ss._streamlink_config_tokens("twitch", []) == []
+
+
 def test_user_input_requester_ask_raises() -> None:
   req = NonInteractiveUserInputRequester()
   with pytest.raises(OSError):
