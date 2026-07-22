@@ -41,6 +41,8 @@ PYTHONPATH=src ./.venv/bin/python -m pytest -q
 - Playback issues:
   - mpv runtime or graphics driver issue
   - invalid mpv option override
+- Rotated recording plays un-rotated in some players:
+  - A rotation is saved as a lossless display-rotation flag. With `auto_remux_to_mp4` disabled, a rotated recording is written as `.mkv`, whose rotation flag is ignored by some players (notably VLC), while mpv and thumbnailers honor it. Enable `auto_remux_to_mp4` to get a `.mp4`, whose rotation flag is honored everywhere. See "Recording Output Formats" in the configuration doc.
 
 ## Logging Tips
 

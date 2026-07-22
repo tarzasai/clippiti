@@ -421,11 +421,13 @@ class MainWindow(QMainWindow):
     self._stop_cfg = None
 
     # A rotation applied before recording is stored losslessly as a display
-    # matrix flag, which requires an mp4/mov container, so a rotated recording
-    # is always remuxed to mp4 even when auto-remux is off.
+    # matrix flag, which MPEG-TS cannot carry. When auto-remux is on we produce
+    # mp4; when it is off but a rotation is present we fall back to mkv (also
+    # lossless and rotation-capable) instead of forcing an unwanted mp4.
     if cfg.auto_remux_to_mp4 or rotation:
       stderr_path = ts_path.with_suffix(".stderr.log") if log.isEnabledFor(logging.DEBUG) else None
-      target_path = ts_path.with_suffix(".mp4")
+      suffix = ".mp4" if cfg.auto_remux_to_mp4 else ".mkv"
+      target_path = ts_path.with_suffix(suffix)
       arguments = [
         "-hide_banner",
         "-loglevel",
@@ -448,10 +450,10 @@ class MainWindow(QMainWindow):
         "-dn",
         "-c",
         "copy",
-        "-movflags",
-        "+faststart",
-        str(target_path),
       ]
+      if cfg.auto_remux_to_mp4:
+        arguments += ["-movflags", "+faststart"]
+      arguments += [str(target_path)]
       job = RemuxJob(
         source_path=ts_path,
         target_path=target_path,
@@ -488,8 +490,10 @@ class MainWindow(QMainWindow):
       return
 
     if result.success:
-      log.info("recording: stopped output=%s remuxed=%s", result.job.target_path, True)
-      self.osd.show_message("Recording stopped", f"Saved: {result.job.target_path.name} (remuxed to mp4)")
+      target = result.job.target_path
+      container = target.suffix.lstrip(".").lower() or "file"
+      log.info("recording: stopped output=%s remuxed=%s", target, True)
+      self.osd.show_message("Recording stopped", f"Saved: {target.name} (remuxed to {container})")
       return
 
     if result.job.stderr_path is not None:

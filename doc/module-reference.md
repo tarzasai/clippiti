@@ -29,6 +29,8 @@
   - live HLS pipeline lifecycle (opens the Streamlink stream, spawns ffmpeg, pumps bytes).
 - `src/clippiti/services/clipper.py`
   - stage preparation, preview frame extraction, clip export job creation.
+- `src/clippiti/services/snapshot.py`
+  - queued single-frame extraction from the buffered segments (via ffmpeg) with rotation-aware finalization for snapshots.
 - `src/clippiti/services/recording.py`
   - recording start/stop/finalize and async stop worker.
 - `src/clippiti/services/remux_queue.py`

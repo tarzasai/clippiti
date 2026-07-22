@@ -56,3 +56,29 @@ Default workdir:
   - `dir`, `filename_format`, `auto_remux_to_mp4`
 - `snapshot`
   - `dir`, `filename_format`
+
+## Recording Output Formats
+
+Recording always captures to **MPEG-TS (`.ts`)** first. TS is chosen for capture because it is a streaming container with no index/`moov` written at the end: if the app crashes or is killed mid-recording, the partial `.ts` is still fully playable, and the source is already TS-based (HLS segments) so the write is a pure stream copy.
+
+The final container depends on `recording.auto_remux_to_mp4` and whether the view was rotated before recording started (rotation is blocked while recording):
+
+| `auto_remux_to_mp4` | rotated before start | final file |
+| --- | --- | --- |
+| `false` | no | `.ts` (kept as captured) |
+| `true` | no | `.mp4` (lossless `-c copy` remux, `+faststart`) |
+| `true` | yes | `.mp4` with a display-rotation flag |
+| `false` | yes | `.mkv` with a display-rotation flag |
+
+A rotation is stored as a lossless **display-rotation flag** (via ffmpeg `-display_rotation`, `-c copy`), never a re-encode. MPEG-TS cannot carry that flag, so a rotated recording must use a container that can:
+
+- With auto-remux enabled it becomes `.mp4`.
+- With auto-remux disabled it falls back to `.mkv` (also lossless and rotation-capable) so the user still avoids an unwanted `.mp4`.
+
+### Player support for the rotation flag
+
+- **`.mp4`** stores rotation in the track display matrix, which is honored by essentially all players (mpv, VLC, browsers, QuickTime) and file-manager thumbnailers.
+- **`.mkv`** stores rotation in the Matroska projection element. mpv and ffmpeg-based thumbnailers apply it, but **some players (notably VLC) ignore it** and show the video un-rotated.
+
+If a rotated recording must play correctly in VLC, enable `auto_remux_to_mp4` so the output is `.mp4`.
+

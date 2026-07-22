@@ -11,6 +11,7 @@ flowchart TD
     UI --> APP[App Controller]
     APP --> BE[Buffer Engine]
     APP --> CLIP[Clip Service]
+    APP --> SNAP[Snapshot Service]
     APP --> REC[Recording Service]
     APP --> RQ[Remux Queue]
 
@@ -22,6 +23,8 @@ flowchart TD
 
     CLIP --> HLS
     CLIP --> FF
+    SNAP --> HLS
+    SNAP --> FF
     REC --> HLS
     REC --> FF
     RQ --> FF
@@ -51,6 +54,7 @@ C4Context
 - Startup is asynchronous so the window can open while pipeline initialization is in progress.
 - The stream processing path is explicit: Streamlink API stream -> pump thread -> ffmpeg stdin -> HLS output -> local playlist.
 - Clipping and recording are service-driven and isolated from UI widgets.
+- Snapshots are extracted from the buffered segments via ffmpeg (not mpv screenshots), so saved images keep correct colors and are rotated to match the viewer.
 - Post-processing (remux/export) uses a queue service to avoid overlapping ffmpeg process control.
 
 ## Core Runtime Artifacts

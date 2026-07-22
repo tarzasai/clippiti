@@ -60,7 +60,28 @@ sequenceDiagram
     Queue-->>UI: job_finished(success/failure)
 ```
 
-## 4. Shutdown
+Rotation is blocked while recording. If the view was rotated before recording started, the stop step forces a lossless remux that carries the rotation flag: to mp4 when auto-remux is enabled, otherwise to mkv. Without rotation and with auto-remux disabled the raw `.ts` is kept.
+
+## 4. Snapshot
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant UI
+    participant Snap as Snapshot Service
+    participant Queue as ffmpeg Queue
+
+    User->>UI: Snapshot (key/toolbar)
+    UI->>UI: read playback position + rotation
+    UI->>Snap: capture(runtime, lag, rotation)
+    Snap->>Snap: locate on-screen frame in buffer segment
+    Snap->>Queue: enqueue ffmpeg extract to local temp
+    Queue-->>Snap: job_finished(success/failure)
+    Snap->>Snap: rotate to match viewer, move to output
+    Snap-->>UI: snapshot_ready / snapshot_failed
+```
+
+## 5. Shutdown
 
 ```mermaid
 flowchart TD
