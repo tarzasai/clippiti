@@ -2,7 +2,6 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 import sys
 import logging
@@ -26,6 +25,7 @@ from ..model.config import ensure_output_dirs, normalize_config, save_config
 from ..services.clipper import ClipConfig, ClipService
 from ..services.recording import AsyncRecordingService, RecordingConfig
 from ..services.remux_queue import FfmpegJobResult, RemuxJob, RemuxQueueService
+from ..services.snapshot import SnapshotConfig, SnapshotService
 
 if TYPE_CHECKING:
   from ..services.buffer_engine import SessionRuntime
@@ -125,13 +125,13 @@ class MainWindow(QMainWindow):
     self._clip_service = ClipService(clip_cfg) if clip_cfg is not None else None
     self._clip_workflow: ClipWorkflow | None = None
     self._recording_cfg = recording_cfg
-    self._snapshot_dir = Path.home() / "Pictures" / "Clippiti" / "snapshots"
-    self._snapshot_filename_format = "{author}.{timestamp}"
+    self._snapshot_service = SnapshotService(self._build_snapshot_cfg(self._config), self)
+    self._snapshot_service.snapshot_ready.connect(self._on_snapshot_ready)
+    self._snapshot_service.snapshot_failed.connect(self._on_snapshot_failed)
     self._stop_in_progress = False
     self._stop_cfg: RecordingConfig | None = None
     self._offline_close_pending = False
     self.video = VideoSurface(media_source, mpv_options)
-    self.video.snapshot_completed.connect(self._on_snapshot_completed)
     self.setCentralWidget(self.video)
 
     self.osd = OsdOverlay(self.video)
@@ -180,6 +180,7 @@ class MainWindow(QMainWindow):
         log.exception("recording: abort error on shutdown")
     self._remux_service.shutdown()
     self._recording.shutdown()
+    self._snapshot_service.shutdown()
     self.strip.shutdown()
     self.video.shutdown()
     if self._favicon_thread is not None and self._favicon_thread.isRunning():
@@ -309,32 +310,20 @@ class MainWindow(QMainWindow):
     self.osd.show_message(self._volume_osd_title())
 
   def _snapshot_action(self) -> None:
-    if self.video.player is None:
+    if self._runtime is None or self.video.player is None:
+      self.osd.show_message("Snapshot", "Not ready yet")
       return
-    self._snapshot_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    author = self._runtime.stream_author if self._runtime is not None else "stream"
-    category = self._runtime.stream_category if self._runtime is not None else "unknown"
-    title = self._runtime.stream_title if self._runtime is not None else "untitled"
-    try:
-      base_name = self._snapshot_filename_format.format(
-        author=author,
-        category=category,
-        title=title,
-        timestamp=ts,
-      )
-    except Exception:
-      base_name = f"{author}.{ts}"
-    safe_name = self._safe_filename(base_name) or f"snapshot_{ts}"
-    target = self._snapshot_dir / f"{safe_name}.png"
-    if not self.video.request_snapshot(str(target)):
+    rotation = self.video.current_rotation()
+    lag = self.video.live_lag_seconds() or 0.0
+    if not self._snapshot_service.capture(self._runtime, lag, rotation):
       self.osd.show_message("Snapshot", "Failed to queue")
 
-  @pyqtSlot(str, bool, str)
-  def _on_snapshot_completed(self, target_path: str, success: bool, error: str) -> None:
-    if success:
-      self.osd.show_snapshot_preview(target_path, timeout_ms=2000)
-      return
+  @pyqtSlot(str)
+  def _on_snapshot_ready(self, target_path: str) -> None:
+    self.osd.show_snapshot_preview(target_path, timeout_ms=2000)
+
+  @pyqtSlot(str)
+  def _on_snapshot_failed(self, error: str) -> None:
     detail = error.strip() if error else "save failed"
     self.osd.show_message("Snapshot", detail)
 
@@ -542,7 +531,6 @@ class MainWindow(QMainWindow):
     general = normalized["general"]
     recording = normalized["recording"]
     clip = normalized["clip"]
-    snapshot = normalized["snapshot"]
 
     ffmpeg_path = str(general.get("ffmpeg_path", "ffmpeg"))
 
@@ -562,8 +550,7 @@ class MainWindow(QMainWindow):
     self._clip_service = ClipService(self._clip_cfg)
     self._rebuild_clip_workflow()
 
-    self._snapshot_dir = Path(str(snapshot.get("dir", "~/Pictures/Clippiti/snapshots"))).expanduser()
-    self._snapshot_filename_format = str(snapshot.get("filename_format", "{author}.{timestamp}"))
+    self._snapshot_service.set_config(self._build_snapshot_cfg(normalized))
 
     self.strip.set_trigger_radius(int(general.get("controls_area", 300)))
     self.strip.set_position(str(general.get("controls_position", "bottom-right-vertical")))
@@ -590,6 +577,16 @@ class MainWindow(QMainWindow):
       if before_value != after_value:
         return True
     return False
+
+  @staticmethod
+  def _build_snapshot_cfg(config: dict[str, object]) -> SnapshotConfig:
+    general = config.get("general", {}) if isinstance(config.get("general"), dict) else {}
+    snapshot = config.get("snapshot", {}) if isinstance(config.get("snapshot"), dict) else {}
+    return SnapshotConfig(
+      output_dir=Path(str(snapshot.get("dir", "~/Pictures/Clippiti/snapshots"))).expanduser(),
+      ffmpeg_path=str(general.get("ffmpeg_path", "ffmpeg")),
+      filename_format=str(snapshot.get("filename_format", "{author}.{timestamp}")),
+    )
 
   @staticmethod
   def _safe_filename(name: str) -> str:

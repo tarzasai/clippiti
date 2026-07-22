@@ -19,7 +19,6 @@ locale.setlocale(locale.LC_NUMERIC, "C")
 
 class VideoSurface(QOpenGLWidget):
   frame_ready = pyqtSignal()
-  snapshot_completed = pyqtSignal(str, bool, str)
   DEFAULT_VOLUME = 70
   ROTATION_STEP = 90
 
@@ -37,6 +36,7 @@ class VideoSurface(QOpenGLWidget):
     self._shutting_down = False
     self._volume = self.DEFAULT_VOLUME
     self._muted = False
+    self._rotation = 0
 
     self.player: mpv.MPV | None = None
     self.render_ctx: mpv.MpvRenderContext | None = None
@@ -223,19 +223,14 @@ class VideoSurface(QOpenGLWidget):
     if self.player is None:
       return 0
 
-    current = 0
-    try:
-      current = int(getattr(self.player, "video_rotate", 0) or 0)
-    except Exception:
-      log.exception("video: failed to read current rotation")
-
-    new_rotation = (current + self.ROTATION_STEP) % 360
+    new_rotation = (self._rotation + self.ROTATION_STEP) % 360
     try:
       self.player.video_rotate = new_rotation
       log.debug("video: rotation set to %s", new_rotation)
     except Exception:
       log.exception("video: failed to set rotation=%s", new_rotation)
-      return current % 360
+      return self._rotation
+    self._rotation = new_rotation
     return new_rotation
 
   def toggle_flip_horizontal(self) -> bool:
@@ -250,31 +245,34 @@ class VideoSurface(QOpenGLWidget):
       log.exception("video: failed to toggle hflip")
       return False
 
-  def request_snapshot(self, target_path: str) -> bool:
+  def current_rotation(self) -> int:
+    """Return the active clockwise display rotation in degrees (0-359).
+
+    Tracked in Python state rather than read back from mpv, because reading
+    ``video-rotate`` immediately after setting it can return the previous value
+    (the change lands on mpv's next playloop tick), which left the first
+    snapshot after a rotation un-rotated.
+    """
+    return self._rotation
+
+  def live_lag_seconds(self) -> float | None:
+    """Return how far behind the live edge the player is currently displaying.
+
+    Computed as the gap between the end of mpv's demuxer cache and the current
+    playback position, both in the same timeline. Used to locate the on-screen
+    frame within the buffered segments for snapshots.
+    """
     if self.player is None:
-      return False
-
+      return None
     try:
-      future = self.player.command_async(
-        "screenshot-to-file",
-        target_path,
-        "video",
-      )
+      position = self.player.time_pos
+      cache_end = self.player.demuxer_cache_time
     except Exception:
-      log.exception("video: failed to queue snapshot path=%s", target_path)
-      return False
-
-    def _on_done(done_future) -> None:
-      try:
-        done_future.result()
-      except Exception as exc:
-        log.exception("video: snapshot failed path=%s", target_path)
-        self.snapshot_completed.emit(target_path, False, str(exc))
-      else:
-        self.snapshot_completed.emit(target_path, True, "")
-
-    future.add_done_callback(_on_done)
-    return True
+      return None
+    if position is None or cache_end is None:
+      return None
+    lag = float(cache_end) - float(position)
+    return lag if lag > 0 else 0.0
 
   def _maybe_paint_next_frame(self) -> None:
     if self._shutting_down:
