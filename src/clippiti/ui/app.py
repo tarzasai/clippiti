@@ -125,6 +125,7 @@ class MainWindow(QMainWindow):
     self._clip_service = ClipService(clip_cfg) if clip_cfg is not None else None
     self._clip_workflow: ClipWorkflow | None = None
     self._recording_cfg = recording_cfg
+    self._recording_rotation = 0
     self._snapshot_service = SnapshotService(self._build_snapshot_cfg(self._config), self)
     self._snapshot_service.snapshot_ready.connect(self._on_snapshot_ready)
     self._snapshot_service.snapshot_failed.connect(self._on_snapshot_failed)
@@ -331,6 +332,9 @@ class MainWindow(QMainWindow):
     if self.video.player is None:
       self.osd.show_message("Rotate", "Player not ready yet")
       return
+    if self._recording.is_recording():
+      self.osd.show_message("Rotate", "Disabled while recording")
+      return
     rotation = self.video.rotate_clockwise()
     self.osd.show_message("Rotate", f"{rotation}\N{DEGREE SIGN}")
 
@@ -382,6 +386,7 @@ class MainWindow(QMainWindow):
       return
     try:
       path = self._recording.start(self._runtime, self._recording_cfg)
+      self._recording_rotation = self.video.current_rotation()
       log.info("recording: started output=%s", path)
       self.osd.show_message("Recording", f"Saving to {path.name}")
       self.strip.set_recording(True)
@@ -410,41 +415,54 @@ class MainWindow(QMainWindow):
   def _handle_recording_stopped(self, ts_path_obj: object) -> None:
     ts_path = Path(str(ts_path_obj))
     cfg = self._stop_cfg or RecordingConfig(output_dir=Path.home())
+    rotation = self._recording_rotation
+    self._recording_rotation = 0
     self._stop_in_progress = False
     self._stop_cfg = None
 
-    if cfg.auto_remux_to_mp4:
+    # A rotation applied before recording is stored losslessly as a display
+    # matrix flag, which requires an mp4/mov container, so a rotated recording
+    # is always remuxed to mp4 even when auto-remux is off.
+    if cfg.auto_remux_to_mp4 or rotation:
       stderr_path = ts_path.with_suffix(".stderr.log") if log.isEnabledFor(logging.DEBUG) else None
       target_path = ts_path.with_suffix(".mp4")
+      arguments = [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+      ]
+      if rotation:
+        # -display_rotation is an input option (must precede -i). Its value is
+        # counterclockwise, while mpv's video-rotate is clockwise, so negate it.
+        # The deprecated `-metadata rotate=` tag is silently ignored by ffmpeg 7+.
+        arguments += ["-display_rotation", str(-rotation)]
+      arguments += [
+        "-i",
+        str(ts_path),
+        "-map",
+        "0:v:0?",
+        "-map",
+        "0:a?",
+        "-sn",
+        "-dn",
+        "-c",
+        "copy",
+        "-movflags",
+        "+faststart",
+        str(target_path),
+      ]
       job = RemuxJob(
         source_path=ts_path,
         target_path=target_path,
         ffmpeg_path=cfg.ffmpeg_path,
-        arguments=[
-          "-hide_banner",
-          "-loglevel",
-          "error",
-          "-y",
-          "-i",
-          str(ts_path),
-          "-map",
-          "0:v:0?",
-          "-map",
-          "0:a?",
-          "-sn",
-          "-dn",
-          "-c",
-          "copy",
-          "-movflags",
-          "+faststart",
-          str(target_path),
-        ],
+        arguments=arguments,
         remove_source_on_success=True,
         stderr_path=stderr_path,
         kind="recording",
       )
       target_path = self._remux_service.enqueue(job)
-      log.info("recording: stopped output=%s remuxing=%s", ts_path, target_path)
+      log.info("recording: stopped output=%s remuxing=%s rotation=%s", ts_path, target_path, rotation)
       self.osd.show_message("Recording stopped", f"Remuxing: {target_path.name}", persistent=True)
       return
 
