@@ -387,13 +387,16 @@ class ClipRangeDialog(QDialog):
 class ClipWorkflow(QObject):
   """Owns clip dialog flow, preview refresh, and clip job completion."""
 
+  # Emitted when the workflow wants the UI to show/clear an OSD message.
+  # MainWindow (which owns the OSD widget) subscribes and renders them.
+  message_requested = pyqtSignal(str, object, bool)  # title, detail, persistent
+  message_cleared = pyqtSignal()
+
   def __init__(
     self,
     clip_service: ClipService,
     clip_cfg: ClipConfig,
     enqueue_job: Callable[[FfmpegJob], Path],
-    show_message: Callable[[str, str | None, bool], None],
-    clear_message: Callable[[], None],
     is_player_muted: Callable[[], bool],
     set_player_muted: Callable[[bool], None],
     parent: QObject | None = None,
@@ -402,8 +405,6 @@ class ClipWorkflow(QObject):
     self._clip_service = clip_service
     self._clip_cfg = clip_cfg
     self._enqueue_job = enqueue_job
-    self._show_message = show_message
-    self._clear_message = clear_message
     self._is_player_muted = is_player_muted
     self._set_player_muted = set_player_muted
 
@@ -414,7 +415,7 @@ class ClipWorkflow(QObject):
     restore_mute_on_exit = False
 
     try:
-      self._show_message("Clip", "Preparing clip...", True)
+      self.message_requested.emit("Clip", "Preparing clip...", True)
       stage = self._run_task(
         parent_widget,
         lambda: self._clip_service.prepare_stage(runtime, rotation),
@@ -477,7 +478,7 @@ class ClipWorkflow(QObject):
 
       if dialog_result != dialog.DialogCode.Accepted:
         self._clip_service.cleanup(stage)
-        self._clear_message()
+        self.message_cleared.emit()
         return
 
       start_selected, end_selected = dialog.selected_range()
@@ -494,12 +495,12 @@ class ClipWorkflow(QObject):
       )
       target_path = self._enqueue_job(job)
       log.info("clip: queued output=%s", target_path)
-      self._show_message("Clip", f"Exporting: {target_path.name}", True)
+      self.message_requested.emit("Clip", f"Exporting: {target_path.name}", True)
     except Exception as exc:
       if stage is not None:
         self._clip_service.cleanup(stage)
       log.error("clip: failed: %s", exc)
-      self._show_message("Clip failed", str(exc), False)
+      self.message_requested.emit("Clip failed", str(exc), False)
     finally:
       if restore_mute_on_exit:
         self._set_player_muted(False)
@@ -557,11 +558,11 @@ class ClipWorkflow(QObject):
 
     if result.success:
       log.info("clip: exported output=%s", result.job.target_path)
-      self._show_message("Clip saved", result.job.target_path.name, False)
+      self.message_requested.emit("Clip saved", result.job.target_path.name, False)
       return
 
     if result.job.stderr_path is not None:
       log.warning("clip: export failed code=%s stderr_log=%s", result.exit_code, result.job.stderr_path)
     else:
       log.warning("clip: export failed code=%s", result.exit_code)
-    self._show_message("Clip failed", "Export failed", False)
+    self.message_requested.emit("Clip failed", "Export failed", False)

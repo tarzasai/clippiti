@@ -56,17 +56,14 @@ class SnapshotService(QObject):
   snapshot_ready = pyqtSignal(str)   # output path
   snapshot_failed = pyqtSignal(str)  # error message
 
-  def __init__(self, config: SnapshotConfig, parent: QObject | None = None) -> None:
+  def __init__(self, config: SnapshotConfig, queue: FfmpegJobQueueService, parent: QObject | None = None) -> None:
     super().__init__(parent)
     self._config = config
-    self._queue = FfmpegJobQueueService(self)
+    self._queue = queue
     self._queue.job_finished.connect(self._on_job_finished)
 
   def set_config(self, config: SnapshotConfig) -> None:
     self._config = config
-
-  def shutdown(self) -> None:
-    self._queue.shutdown()
 
   def capture(
     self,

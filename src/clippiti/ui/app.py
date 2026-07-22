@@ -126,7 +126,7 @@ class MainWindow(QMainWindow):
     self._clip_workflow: ClipWorkflow | None = None
     self._recording_cfg = recording_cfg
     self._recording_rotation = 0
-    self._snapshot_service = SnapshotService(self._build_snapshot_cfg(self._config), self)
+    self._snapshot_service = SnapshotService(self._build_snapshot_cfg(self._config), self._remux_service, self)
     self._snapshot_service.snapshot_ready.connect(self._on_snapshot_ready)
     self._snapshot_service.snapshot_failed.connect(self._on_snapshot_failed)
     self._stop_in_progress = False
@@ -181,7 +181,6 @@ class MainWindow(QMainWindow):
         log.exception("recording: abort error on shutdown")
     self._remux_service.shutdown()
     self._recording.shutdown()
-    self._snapshot_service.shutdown()
     self.strip.shutdown()
     self.video.shutdown()
     if self._favicon_thread is not None and self._favicon_thread.isRunning():
@@ -298,12 +297,12 @@ class MainWindow(QMainWindow):
       clip_service=self._clip_service,
       clip_cfg=self._clip_cfg,
       enqueue_job=self._remux_service.enqueue,
-      show_message=self._show_osd_message,
-      clear_message=self._clear_osd_message,
       is_player_muted=self._is_player_muted,
       set_player_muted=self._set_player_muted,
       parent=self,
     )
+    self._clip_workflow.message_requested.connect(self._show_osd_message)
+    self._clip_workflow.message_cleared.connect(self._clear_osd_message)
 
   def _mute_action(self) -> None:
     self.video.muted = not self.video.muted
@@ -487,6 +486,10 @@ class MainWindow(QMainWindow):
     if result.job.kind == "clip":
       if self._clip_workflow is not None:
         self._clip_workflow.handle_clip_job_finished(result)
+      return
+
+    # Snapshot jobs share this queue but are handled by SnapshotService.
+    if result.job.kind != "recording":
       return
 
     if result.success:

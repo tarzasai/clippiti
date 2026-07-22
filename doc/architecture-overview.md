@@ -13,7 +13,7 @@ flowchart TD
     APP --> CLIP[Clip Service]
     APP --> SNAP[Snapshot Service]
     APP --> REC[Recording Service]
-    APP --> RQ[Remux Queue]
+    APP --> RQ[ffmpeg Job Queue]
 
     BE --> SL[Streamlink API]
     SL --> PUMP[Stream pump thread]
@@ -21,12 +21,13 @@ flowchart TD
     FF --> HLS[/local live.m3u8 + segments/]
     HLS --> MPV[mpv via python-mpv]
 
-    CLIP --> HLS
-    CLIP --> FF
-    SNAP --> HLS
-    SNAP --> FF
-    REC --> HLS
-    REC --> FF
+    HLS --> CLIP
+    HLS --> SNAP
+    HLS --> REC
+
+    CLIP -->|enqueue export| RQ
+    SNAP -->|enqueue extract| RQ
+    REC -->|enqueue remux| RQ
     RQ --> FF
 ```
 
@@ -55,7 +56,7 @@ C4Context
 - The stream processing path is explicit: Streamlink API stream -> pump thread -> ffmpeg stdin -> HLS output -> local playlist.
 - Clipping and recording are service-driven and isolated from UI widgets.
 - Snapshots are extracted from the buffered segments via ffmpeg (not mpv screenshots), so saved images keep correct colors and are rotated to match the viewer.
-- Post-processing (remux/export) uses a queue service to avoid overlapping ffmpeg process control.
+- Post-processing (clip export, recording remux, snapshot extraction) goes through a single shared ffmpeg job queue, so ffmpeg processes never overlap and are controlled from one place.
 
 ## Core Runtime Artifacts
 
