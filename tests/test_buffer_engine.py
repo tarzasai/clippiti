@@ -1,9 +1,9 @@
 from pathlib import Path
 import threading
 
-import clippiti.services.buffer_engine as be
-from clippiti.services.buffer_engine import SessionRuntime
-from clippiti.services.sl_session import StreamMetadata
+import clippiti.services.buffer as be
+from clippiti.services.buffer import SessionRuntime
+from clippiti.services.slsession import StreamMetadata
 
 
 class _FakeStdin:

@@ -2,8 +2,8 @@ from pathlib import Path
 
 from PyQt6.QtCore import QProcess
 
-from clippiti.services.remux_queue import FfmpegJob
-from clippiti.services.remux_queue import FfmpegJobQueueService
+from clippiti.services.remuxer import FfmpegJob
+from clippiti.services.remuxer import FfmpegJobQueueService
 
 
 class _DummyProcess:

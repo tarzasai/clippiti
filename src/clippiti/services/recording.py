@@ -11,7 +11,7 @@ from pathlib import Path
 from signal import SIGTERM
 from PyQt6.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
 
-from ..services.buffer_engine import SessionRuntime
+from ..services.buffer import SessionRuntime
 
 log = logging.getLogger("clippiti")
 

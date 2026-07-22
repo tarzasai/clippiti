@@ -1,7 +1,7 @@
 import pytest
 
-import clippiti.services.sl_session as ss
-from clippiti.services.sl_session import (
+import clippiti.services.slsession as ss
+from clippiti.services.slsession import (
   NonInteractiveUserInputRequester,
   StreamMetadata,
   StreamPump,

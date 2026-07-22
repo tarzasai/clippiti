@@ -16,26 +16,26 @@ os.environ.setdefault('QT_QPA_ORG_NAME', 'Clippiti')
 os.environ.setdefault('QT_QPA_APPLICATION_NAME', 'Clippiti')
 os.environ.setdefault('QT_LOGGING_RULES', 'qt.qpa.services=false')
 
-from .services.buffer_engine import cleanup_orphan_session_dirs
-from .services.buffer_engine import cleanup_runtime_artifacts
-from .services.buffer_engine import start_single_session_pipeline
-from .services.buffer_engine import terminate_runtime
+from .services.buffer import cleanup_orphan_session_dirs
+from .services.buffer import cleanup_runtime_artifacts
+from .services.buffer import start_single_session_pipeline
+from .services.buffer import terminate_runtime
 from .model.config import ensure_output_dirs
 from .model.config import load_config
 from .model.config import normalize_config
 from .model.config import resolve_config_path
 from .model.config import resolve_workdir
 from .model.config import save_config
-from .services.sl_session import create_session
-from .services.sl_session import resolve_stream
-from .services.mpv_args import build_mpv_options
+from .services.slsession import create_session
+from .services.slsession import resolve_stream
+from .services.mpvargs import build_mpv_options
 from .services.clipper import ClipConfig
 from .services.recording import RecordingConfig
 from .ui.app import run_app
 from wakepy import keep as _wakepy_keep
 
 if TYPE_CHECKING:
-  from .services.buffer_engine import SessionRuntime
+  from .services.buffer import SessionRuntime
   from .ui.app import MainWindow
 
 # Determine version: prefer installed distribution metadata, fallback to package __version__

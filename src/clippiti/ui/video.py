@@ -3,6 +3,7 @@
 import locale
 import os
 import logging
+from pathlib import Path
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtGui import QOpenGLContext
@@ -37,6 +38,7 @@ class VideoSurface(QOpenGLWidget):
     self._volume = self.DEFAULT_VOLUME
     self._muted = False
     self._rotation = 0
+    self._screenshot_futures: set = set()
 
     self.player: mpv.MPV | None = None
     self.render_ctx: mpv.MpvRenderContext | None = None
@@ -127,6 +129,11 @@ class VideoSurface(QOpenGLWidget):
     player_options["volume"] = self._volume
     player_options["mute"] = self._muted
     player_options["audio_client_name"] = "Clippiti"
+    # Render screenshots with mpv's software scaler instead of the libmpv render
+    # VO. The render-VO screenshot path drops chroma (sepia) when video-rotate is
+    # active; the SW path handles rotation correctly. Playback is unaffected
+    # (still hardware-decoded and GPU-rendered).
+    player_options["screenshot_sw"] = "yes"
 
     self.player = mpv.MPV(**player_options)
     self._install_decoder_logging()
@@ -254,6 +261,38 @@ class VideoSurface(QOpenGLWidget):
     snapshot after a rotation un-rotated.
     """
     return self._rotation
+
+  def save_screenshot(self, path: Path, on_done) -> bool:
+    """Asynchronously save mpv's current video frame to ``path``.
+
+    MUST use command_async: a synchronous screenshot deadlocks with the libmpv
+    render API, because the screenshot needs the render loop -- which runs on
+    this same GUI thread -- so a blocking call freezes the whole app.
+    ``on_done(success: bool)`` is invoked on mpv's event thread when done.
+    Rotation is intentionally not applied here yet.
+    """
+    if self.player is None:
+      return False
+
+    def _cb(error, result) -> None:
+      ok = error is None and path.exists()
+      try:
+        on_done(ok)
+      finally:
+        try:
+          self._screenshot_futures.discard(future)
+        except NameError:
+          pass
+
+    try:
+      future = self.player.command_async(
+        "screenshot-to-file", str(path), "video", callback=_cb
+      )
+    except Exception:
+      log.exception("video: screenshot failed path=%s", path)
+      return False
+    self._screenshot_futures.add(future)
+    return True
 
   def live_lag_seconds(self) -> float | None:
     """Return how far behind the live edge the player is currently displaying.

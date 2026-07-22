@@ -11,8 +11,9 @@ from PyQt6.QtMultimediaWidgets import QVideoWidget
 from PyQt6.QtCore import QUrl
 from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QGridLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QStackedLayout, QVBoxLayout, QWidget
 
-from ..services.clipper import ClipBufferStage, ClipConfig, ClipExportContext, ClipService
-from ..services.remux_queue import FfmpegJob, FfmpegJobResult
+from ..services.clipper import ClipBufferStage, ClipExportContext
+from ..services.remuxer import FfmpegJobResult
+from ..app_context import AppContext
 
 
 log = logging.getLogger("clippiti")
@@ -391,22 +392,17 @@ class ClipWorkflow(QObject):
   # MainWindow (which owns the OSD widget) subscribes and renders them.
   message_requested = pyqtSignal(str, object, bool)  # title, detail, persistent
   message_cleared = pyqtSignal()
+  # Emitted to mute/unmute the live player during the clip preview; MainWindow
+  # applies it (and refreshes the toolbar audio state).
+  mute_requested = pyqtSignal(bool)
 
   def __init__(
     self,
-    clip_service: ClipService,
-    clip_cfg: ClipConfig,
-    enqueue_job: Callable[[FfmpegJob], Path],
-    is_player_muted: Callable[[], bool],
-    set_player_muted: Callable[[bool], None],
+    ctx: AppContext,
     parent: QObject | None = None,
   ) -> None:
     super().__init__(parent)
-    self._clip_service = clip_service
-    self._clip_cfg = clip_cfg
-    self._enqueue_job = enqueue_job
-    self._is_player_muted = is_player_muted
-    self._set_player_muted = set_player_muted
+    self._ctx = ctx
 
   def run_clip_dialog(self, runtime: object, parent_widget: QWidget, rotation: int = 0) -> None:
     stage: ClipBufferStage | None = None
@@ -418,11 +414,11 @@ class ClipWorkflow(QObject):
       self.message_requested.emit("Clip", "Preparing clip...", True)
       stage = self._run_task(
         parent_widget,
-        lambda: self._clip_service.prepare_stage(runtime, rotation),
+        lambda: self._ctx.clip_service.prepare_stage(runtime, rotation),
       )
       total_seconds = max(ClipRangeDialog.MIN_DURATION, int(stage.total_seconds + 0.999))
       end_seconds = total_seconds
-      start_seconds = max(0, end_seconds - int(self._clip_cfg.default_duration))
+      start_seconds = max(0, end_seconds - int(self._ctx.clip_cfg.default_duration))
 
       stream_author = str(getattr(runtime, "stream_author", "stream"))
       stream_category = str(getattr(runtime, "stream_category", "unknown"))
@@ -466,18 +462,18 @@ class ClipWorkflow(QObject):
       dialog.on_range_changed(on_range_changed)
 
       self.refresh_clip_previews(dialog, stage)
-      if not self._is_player_muted():
-        self._set_player_muted(True)
+      if not self._ctx.muted:
+        self.mute_requested.emit(True)
         restore_mute_on_exit = True
 
       dialog_result = dialog.exec()
 
       if restore_mute_on_exit:
-        self._set_player_muted(False)
+        self.mute_requested.emit(False)
         restore_mute_on_exit = False
 
       if dialog_result != dialog.DialogCode.Accepted:
-        self._clip_service.cleanup(stage)
+        self._ctx.clip_service.cleanup(stage)
         self.message_cleared.emit()
         return
 
@@ -485,7 +481,7 @@ class ClipWorkflow(QObject):
       stream_author = str(getattr(runtime, "stream_author", "stream"))
       stream_category = str(getattr(runtime, "stream_category", "unknown"))
       stream_title = str(getattr(runtime, "stream_title", "untitled"))
-      job = self._clip_service.build_export_job(
+      job = self._ctx.clip_service.build_export_job(
         stage,
         stream_author,
         stream_category,
@@ -493,23 +489,23 @@ class ClipWorkflow(QObject):
         float(start_selected),
         float(end_selected),
       )
-      target_path = self._enqueue_job(job)
+      target_path = self._ctx.remux_queue.enqueue(job)
       log.info("clip: queued output=%s", target_path)
       self.message_requested.emit("Clip", f"Exporting: {target_path.name}", True)
     except Exception as exc:
       if stage is not None:
-        self._clip_service.cleanup(stage)
+        self._ctx.clip_service.cleanup(stage)
       log.error("clip: failed: %s", exc)
       self.message_requested.emit("Clip failed", str(exc), False)
     finally:
       if restore_mute_on_exit:
-        self._set_player_muted(False)
+        self.mute_requested.emit(False)
 
   def refresh_clip_previews(self, dialog: ClipRangeDialog, stage: ClipBufferStage) -> None:
     start_seconds, end_seconds = dialog.selected_range()
     start_image, end_image = self._run_task(
       dialog,
-      lambda: self._clip_service.preview_frames(stage, float(start_seconds), float(end_seconds)),
+      lambda: self._ctx.clip_service.preview_frames(stage, float(start_seconds), float(end_seconds)),
     )
     dialog.set_preview_images(start_image, end_image)
 
@@ -554,7 +550,7 @@ class ClipWorkflow(QObject):
   def handle_clip_job_finished(self, result: FfmpegJobResult) -> None:
     context = result.job.context
     if isinstance(context, ClipExportContext):
-      self._clip_service.cleanup(context.stage)
+      self._ctx.clip_service.cleanup(context.stage)
 
     if result.success:
       log.info("clip: exported output=%s", result.job.target_path)

@@ -22,11 +22,10 @@ flowchart TD
     HLS --> MPV[mpv via python-mpv]
 
     HLS --> CLIP
-    HLS --> SNAP
     HLS --> REC
+    SNAP -->|mpv software screenshot| MPV
 
     CLIP -->|enqueue export| RQ
-    SNAP -->|enqueue extract| RQ
     REC -->|enqueue remux| RQ
     RQ --> FF
 ```
@@ -55,8 +54,10 @@ C4Context
 - Startup is asynchronous so the window can open while pipeline initialization is in progress.
 - The stream processing path is explicit: Streamlink API stream -> pump thread -> ffmpeg stdin -> HLS output -> local playlist.
 - Clipping and recording are service-driven and isolated from UI widgets.
-- Snapshots are extracted from the buffered segments via ffmpeg (not mpv screenshots), so saved images keep correct colors and are rotated to match the viewer.
-- Post-processing (clip export, recording remux, snapshot extraction) goes through a single shared ffmpeg job queue, so ffmpeg processes never overlap and are controlled from one place.
+- A single `AppContext` (see `app_context.py`) holds the singleton services and shared session state and is passed to the workflow controllers; live player state (mute/rotation) is delegated to the video surface via a `PlayerControls` protocol so there is one source of truth.
+- Clip and recording flows are extracted into `ClipWorkflow` / `RecordingWorkflow` controllers that take the context and emit Qt signals (OSD messages, mute, recording state); `MainWindow` subscribes and renders. Services and widgets never receive UI callbacks.
+- Snapshots are taken with mpv's own software screenshot (`screenshot-sw`, so colors stay correct under the libmpv render VO), written to a temp file, rotated with Pillow to match the viewer's rotation (the software screenshot ignores `video-rotate`), then moved to the output dir. Playback stays hardware-decoded and GPU-rendered.
+- Post-processing for clips and recordings (export/remux) goes through a single shared ffmpeg job queue, so those ffmpeg processes never overlap and are controlled from one place. Snapshots do not use the queue (mpv writes the image directly).
 
 ## Core Runtime Artifacts
 

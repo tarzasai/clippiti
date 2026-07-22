@@ -69,17 +69,17 @@ sequenceDiagram
     participant User
     participant UI
     participant Snap as Snapshot Service
-    participant Queue as ffmpeg Queue
+    participant MPV as mpv
 
     User->>UI: Snapshot (key/toolbar)
-    UI->>UI: read playback position + rotation
-    UI->>Snap: capture(runtime, lag, rotation)
-    Snap->>Snap: locate on-screen frame in buffer segment
-    Snap->>Queue: enqueue ffmpeg extract to local temp
-    Queue-->>Snap: job_finished(success/failure)
-    Snap->>Snap: rotate to match viewer, move to output
+    UI->>Snap: capture(runtime, rotation)
+    Snap->>MPV: command_async screenshot-to-file (software) to local temp
+    MPV-->>Snap: on_done(success/failure)
+    Snap->>Snap: rotate temp to match viewer (Pillow), move to output
     Snap-->>UI: snapshot_ready / snapshot_failed
 ```
+
+mpv's software screenshot (`screenshot-sw`) keeps correct colors under the libmpv render VO but ignores `video-rotate`, so the saved frame is rotated afterwards to match what the viewer sees. The command is async because a synchronous screenshot deadlocks the render API.
 
 ## 5. Shutdown
 

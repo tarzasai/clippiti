@@ -15,20 +15,22 @@ from PyQt6.QtGui import QIcon, QKeyEvent, QPixmap, QResizeEvent
 from PyQt6.QtWidgets import QApplication, QMainWindow, QMessageBox
 import os
 
-from .clip_dialog import ClipWorkflow
-from .control_strip import ControlStrip
+from .clipper import ClipWorkflow
+from .toolbar import ControlStrip
+from .recorder import RecordingWorkflow
 from ..services.favicons import get_favicon
 from .osd import OsdOverlay
-from .settings_dialog import SettingsDialog
-from .video_surface import VideoSurface
+from .settings import SettingsDialog
+from .video import VideoSurface
 from ..model.config import ensure_output_dirs, normalize_config, save_config
 from ..services.clipper import ClipConfig, ClipService
 from ..services.recording import AsyncRecordingService, RecordingConfig
-from ..services.remux_queue import FfmpegJobResult, RemuxJob, RemuxQueueService
+from ..services.remuxer import FfmpegJobResult, RemuxQueueService
 from ..services.snapshot import SnapshotConfig, SnapshotService
+from ..app_context import AppContext
 
 if TYPE_CHECKING:
-  from ..services.buffer_engine import SessionRuntime
+  from ..services.buffer import SessionRuntime
 
 log = logging.getLogger("clippiti")
 
@@ -113,27 +115,31 @@ class MainWindow(QMainWindow):
     self.resize(1280, 760)
 
     self._shutting_down = False
-    self._runtime = None
     self._config = normalize_config(deepcopy(config) if config is not None else {})
     self._config_path = config_path
-    self._recording = AsyncRecordingService(self)
-    self._recording.stop_finished.connect(self._handle_recording_stopped)
-    self._recording.stop_failed.connect(self._handle_recording_stop_failed)
-    self._remux_service = RemuxQueueService(self)
-    self._remux_service.job_finished.connect(self._on_remux_job_finished)
-    self._clip_cfg = clip_cfg
-    self._clip_service = ClipService(clip_cfg) if clip_cfg is not None else None
-    self._clip_workflow: ClipWorkflow | None = None
-    self._recording_cfg = recording_cfg
-    self._recording_rotation = 0
-    self._snapshot_service = SnapshotService(self._build_snapshot_cfg(self._config), self._remux_service, self)
-    self._snapshot_service.snapshot_ready.connect(self._on_snapshot_ready)
-    self._snapshot_service.snapshot_failed.connect(self._on_snapshot_failed)
-    self._stop_in_progress = False
-    self._stop_cfg: RecordingConfig | None = None
-    self._offline_close_pending = False
+
     self.video = VideoSurface(media_source, mpv_options)
     self.setCentralWidget(self.video)
+
+    # Single application context: singleton services + shared session state.
+    remux = RemuxQueueService(self)
+    recording = AsyncRecordingService(self)
+    snapshot = SnapshotService(self._build_snapshot_cfg(self._config), self.video, self)
+    self._ctx = AppContext(
+      remux_queue=remux,
+      recording=recording,
+      snapshot=snapshot,
+      player=self.video,
+      clip_cfg=clip_cfg,
+      clip_service=ClipService(clip_cfg) if clip_cfg is not None else None,
+      recording_cfg=recording_cfg,
+    )
+    remux.job_finished.connect(self._on_remux_job_finished)
+    snapshot.snapshot_ready.connect(self._on_snapshot_ready)
+    snapshot.snapshot_failed.connect(self._on_snapshot_failed)
+
+    self._clip_workflow: ClipWorkflow | None = None
+    self._offline_close_pending = False
 
     self.osd = OsdOverlay(self.video)
     if not media_source:
@@ -146,6 +152,10 @@ class MainWindow(QMainWindow):
     self.strip.raise_()
     self._wire_toolbar_actions()
     self._apply_audio_state()
+
+    self._recording_workflow = RecordingWorkflow(self._ctx, parent=self)
+    self._recording_workflow.message_requested.connect(self._show_osd_message)
+    self._recording_workflow.recording_state_changed.connect(self.strip.set_recording)
 
     self._reposition_timer = QTimer(self)
     self._reposition_timer.setSingleShot(True)
@@ -173,14 +183,10 @@ class MainWindow(QMainWindow):
     log.debug("window: shutdown begin")
     self._reposition_timer.stop()
     self._pipeline_watch_timer.stop()
-    if self._recording.is_recording() and not self._stop_in_progress:
-      try:
-        self._recording.abort()
-        log.info("recording: aborted on shutdown")
-      except Exception:
-        log.exception("recording: abort error on shutdown")
-    self._remux_service.shutdown()
-    self._recording.shutdown()
+    if self._recording_workflow.is_recording():
+      self._recording_workflow.abort_if_recording()
+    self._ctx.remux_queue.shutdown()
+    self._ctx.recording.shutdown()
     self.strip.shutdown()
     self.video.shutdown()
     if self._favicon_thread is not None and self._favicon_thread.isRunning():
@@ -216,19 +222,19 @@ class MainWindow(QMainWindow):
     self.osd.clear_message()
 
   def set_runtime(self, runtime: SessionRuntime) -> None:
-    self._runtime = runtime
+    self._ctx.runtime = runtime
     self._offline_close_pending = False
     if not self._pipeline_watch_timer.isActive():
       self._pipeline_watch_timer.start()
 
   def _check_pipeline_health(self) -> None:
-    if self._shutting_down or self._runtime is None:
+    if self._shutting_down or self._ctx.runtime is None:
       return
     if self._offline_close_pending:
       return
 
-    streamlink_pump = getattr(self._runtime, "stream_pump", None)
-    ffmpeg_proc = getattr(self._runtime, "ffmpeg_proc", None)
+    streamlink_pump = getattr(self._ctx.runtime, "stream_pump", None)
+    ffmpeg_proc = getattr(self._ctx.runtime, "ffmpeg_proc", None)
     streamlink_terminated = self._is_terminated(streamlink_pump)
     ffmpeg_terminated = self._is_terminated(ffmpeg_proc)
     if not (streamlink_terminated or ffmpeg_terminated):
@@ -282,27 +288,18 @@ class MainWindow(QMainWindow):
   def _clear_osd_message(self) -> None:
     self.osd.clear_message()
 
-  def _is_player_muted(self) -> bool:
-    return self.video.muted
-
   def _set_player_muted(self, muted: bool) -> None:
     self.video.muted = muted
     self._apply_audio_state()
 
   def _rebuild_clip_workflow(self) -> None:
-    if self._clip_service is None or self._clip_cfg is None:
+    if self._ctx.clip_service is None or self._ctx.clip_cfg is None:
       self._clip_workflow = None
       return
-    self._clip_workflow = ClipWorkflow(
-      clip_service=self._clip_service,
-      clip_cfg=self._clip_cfg,
-      enqueue_job=self._remux_service.enqueue,
-      is_player_muted=self._is_player_muted,
-      set_player_muted=self._set_player_muted,
-      parent=self,
-    )
+    self._clip_workflow = ClipWorkflow(self._ctx, parent=self)
     self._clip_workflow.message_requested.connect(self._show_osd_message)
     self._clip_workflow.message_cleared.connect(self._clear_osd_message)
+    self._clip_workflow.mute_requested.connect(self._set_player_muted)
 
   def _mute_action(self) -> None:
     self.video.muted = not self.video.muted
@@ -310,13 +307,11 @@ class MainWindow(QMainWindow):
     self.osd.show_message(self._volume_osd_title())
 
   def _snapshot_action(self) -> None:
-    if self._runtime is None or self.video.player is None:
+    if self._ctx.runtime is None or self.video.player is None:
       self.osd.show_message("Snapshot", "Not ready yet")
       return
-    rotation = self.video.current_rotation()
-    lag = self.video.live_lag_seconds() or 0.0
-    if not self._snapshot_service.capture(self._runtime, lag, rotation):
-      self.osd.show_message("Snapshot", "Failed to queue")
+    if not self._ctx.snapshot.capture(self._ctx.runtime, self._ctx.rotation):
+      self.osd.show_message("Snapshot", "Failed to save")
 
   @pyqtSlot(str)
   def _on_snapshot_ready(self, target_path: str) -> None:
@@ -331,7 +326,7 @@ class MainWindow(QMainWindow):
     if self.video.player is None:
       self.osd.show_message("Rotate", "Player not ready yet")
       return
-    if self._recording.is_recording():
+    if self._ctx.recording.is_recording():
       self.osd.show_message("Rotate", "Disabled while recording")
       return
     rotation = self.video.rotate_clockwise()
@@ -371,154 +366,27 @@ class MainWindow(QMainWindow):
     return f"volume {self.video.volume}%"
 
   def _toggle_recording(self) -> None:
-    if self._recording.is_recording():
-      self._stop_recording()
-    else:
-      self._start_recording()
-
-  def _start_recording(self) -> None:
-    if self._runtime is None:
-      self.osd.show_message("Recording", "Stream not ready yet")
-      return
-    if self._recording_cfg is None:
-      self.osd.show_message("Recording", "Recording not configured")
-      return
-    try:
-      path = self._recording.start(self._runtime, self._recording_cfg)
-      self._recording_rotation = self.video.current_rotation()
-      log.info("recording: started output=%s", path)
-      self.osd.show_message("Recording", f"Saving to {path.name}")
-      self.strip.set_recording(True)
-    except Exception as exc:
-      log.error("recording: failed to start: %s", exc)
-      self.osd.show_message("Recording failed", str(exc))
-
-  def _stop_recording(self) -> None:
-    if self._stop_in_progress:
-      return
-
-    try:
-      cfg = self._recording_cfg or RecordingConfig(output_dir=Path.home())
-      self._stop_cfg = cfg
-      self._stop_in_progress = True
-      self.strip.set_recording(False)
-      self.osd.show_message("Recording", "Stopping...", persistent=True)
-      if not self._recording.request_stop():
-        self._stop_in_progress = False
-    except Exception as exc:
-      self._stop_in_progress = False
-      log.error("recording: failed to stop: %s", exc)
-      self.osd.show_message("Recording error", str(exc))
-
-  @pyqtSlot(object)
-  def _handle_recording_stopped(self, ts_path_obj: object) -> None:
-    ts_path = Path(str(ts_path_obj))
-    cfg = self._stop_cfg or RecordingConfig(output_dir=Path.home())
-    rotation = self._recording_rotation
-    self._recording_rotation = 0
-    self._stop_in_progress = False
-    self._stop_cfg = None
-
-    # A rotation applied before recording is stored losslessly as a display
-    # matrix flag, which MPEG-TS cannot carry. When auto-remux is on we produce
-    # mp4; when it is off but a rotation is present we fall back to mkv (also
-    # lossless and rotation-capable) instead of forcing an unwanted mp4.
-    if cfg.auto_remux_to_mp4 or rotation:
-      stderr_path = ts_path.with_suffix(".stderr.log") if log.isEnabledFor(logging.DEBUG) else None
-      suffix = ".mp4" if cfg.auto_remux_to_mp4 else ".mkv"
-      target_path = ts_path.with_suffix(suffix)
-      arguments = [
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-y",
-      ]
-      if rotation:
-        # -display_rotation is an input option (must precede -i). Its value is
-        # counterclockwise, while mpv's video-rotate is clockwise, so negate it.
-        # The deprecated `-metadata rotate=` tag is silently ignored by ffmpeg 7+.
-        arguments += ["-display_rotation", str(-rotation)]
-      arguments += [
-        "-i",
-        str(ts_path),
-        "-map",
-        "0:v:0?",
-        "-map",
-        "0:a?",
-        "-sn",
-        "-dn",
-        "-c",
-        "copy",
-      ]
-      if cfg.auto_remux_to_mp4:
-        arguments += ["-movflags", "+faststart"]
-      arguments += [str(target_path)]
-      job = RemuxJob(
-        source_path=ts_path,
-        target_path=target_path,
-        ffmpeg_path=cfg.ffmpeg_path,
-        arguments=arguments,
-        remove_source_on_success=True,
-        stderr_path=stderr_path,
-        kind="recording",
-      )
-      target_path = self._remux_service.enqueue(job)
-      log.info("recording: stopped output=%s remuxing=%s rotation=%s", ts_path, target_path, rotation)
-      self.osd.show_message("Recording stopped", f"Remuxing: {target_path.name}", persistent=True)
-      return
-
-    log.info("recording: stopped output=%s remuxed=%s", ts_path, False)
-    self.osd.show_message("Recording stopped", f"Saved: {ts_path.name}")
-
-  @pyqtSlot(object)
-  def _handle_recording_stop_failed(self, exc_obj: object) -> None:
-    self._stop_in_progress = False
-    self._stop_cfg = None
-    log.error("recording: failed to stop: %s", exc_obj)
-    self.osd.show_message("Recording error", str(exc_obj))
+    self._recording_workflow.toggle()
 
   @pyqtSlot(object)
   def _on_remux_job_finished(self, result_obj: object) -> None:
     result = result_obj
     if not isinstance(result, FfmpegJobResult):
       return
-
-    if result.job.kind == "clip":
-      if self._clip_workflow is not None:
-        self._clip_workflow.handle_clip_job_finished(result)
-      return
-
-    # Snapshot jobs share this queue but are handled by SnapshotService.
-    if result.job.kind != "recording":
-      return
-
-    if result.success:
-      target = result.job.target_path
-      container = target.suffix.lstrip(".").lower() or "file"
-      log.info("recording: stopped output=%s remuxed=%s", target, True)
-      self.osd.show_message("Recording stopped", f"Saved: {target.name} (remuxed to {container})")
-      return
-
-    if result.job.stderr_path is not None:
-      log.warning(
-        "recording: remux failed code=%s stderr_log=%s",
-        result.exit_code,
-        result.job.stderr_path,
-      )
-    else:
-      log.warning("recording: remux failed code=%s", result.exit_code)
-    log.info("recording: stopped output=%s remuxed=%s", result.job.source_path, False)
-    self.osd.show_message("Recording stopped", f"Saved: {result.job.source_path.name}")
+    # Recording jobs are handled by RecordingWorkflow; snapshots by
+    # SnapshotService. MainWindow only dispatches clip results here.
+    if result.job.kind == "clip" and self._clip_workflow is not None:
+      self._clip_workflow.handle_clip_job_finished(result)
 
   def _clip_action(self) -> None:
-    if self._runtime is None:
+    if self._ctx.runtime is None:
       self.osd.show_message("Clip", "Stream not ready yet")
       return
     if self._clip_workflow is None:
       self.osd.show_message("Clip", "Clip service not configured")
       return
     rotation = self.video.current_rotation()
-    self._clip_workflow.run_clip_dialog(self._runtime, self, rotation)
+    self._clip_workflow.run_clip_dialog(self._ctx.runtime, self, rotation)
 
   def _settings_action(self) -> None:
     dialog = SettingsDialog(self._config, self)
@@ -560,24 +428,24 @@ class MainWindow(QMainWindow):
 
     ffmpeg_path = str(general.get("ffmpeg_path", "ffmpeg"))
 
-    self._recording_cfg = RecordingConfig(
+    self._ctx.recording_cfg = RecordingConfig(
       output_dir=Path(str(recording.get("dir", "~/Videos/Clippiti/recordings"))).expanduser(),
       filename_format=str(recording.get("filename_format", "{author}.{timestamp}")),
       ffmpeg_path=ffmpeg_path,
       auto_remux_to_mp4=bool(recording.get("auto_remux_to_mp4", False)),
     )
 
-    self._clip_cfg = ClipConfig(
+    self._ctx.clip_cfg = ClipConfig(
       output_dir=Path(str(clip.get("dir", "~/Videos/Clippiti/clips"))).expanduser(),
       ffmpeg_path=ffmpeg_path,
       default_duration=int(clip.get("default_duration", 30)),
       filename_format=str(clip.get("filename_format", "{author}.{timestamp}")),
       auto_remux_to_mp4=bool(clip.get("auto_remux_to_mp4", True)),
     )
-    self._clip_service = ClipService(self._clip_cfg)
+    self._ctx.clip_service = ClipService(self._ctx.clip_cfg)
     self._rebuild_clip_workflow()
 
-    self._snapshot_service.set_config(self._build_snapshot_cfg(normalized))
+    self._ctx.snapshot.set_config(self._build_snapshot_cfg(normalized))
 
     self.strip.set_trigger_radius(int(general.get("controls_area", 300)))
     self.strip.set_position(str(general.get("controls_position", "bottom-right-vertical")))
@@ -607,11 +475,9 @@ class MainWindow(QMainWindow):
 
   @staticmethod
   def _build_snapshot_cfg(config: dict[str, object]) -> SnapshotConfig:
-    general = config.get("general", {}) if isinstance(config.get("general"), dict) else {}
     snapshot = config.get("snapshot", {}) if isinstance(config.get("snapshot"), dict) else {}
     return SnapshotConfig(
       output_dir=Path(str(snapshot.get("dir", "~/Pictures/Clippiti/snapshots"))).expanduser(),
-      ffmpeg_path=str(general.get("ffmpeg_path", "ffmpeg")),
       filename_format=str(snapshot.get("filename_format", "{author}.{timestamp}")),
     )
 

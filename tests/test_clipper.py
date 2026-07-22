@@ -1,7 +1,7 @@
 from pathlib import Path
 import subprocess
 
-from clippiti.services.buffer_engine import SessionRuntime
+from clippiti.services.buffer import SessionRuntime
 from clippiti.services.clipper import ClipService
 
 

@@ -9,8 +9,8 @@ import shutil
 import subprocess
 import tempfile
 
-from .buffer_engine import SessionRuntime
-from .remux_queue import FfmpegJob
+from .buffer import SessionRuntime
+from .remuxer import FfmpegJob
 
 
 log = logging.getLogger("clippiti")

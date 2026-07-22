@@ -1,5 +1,5 @@
-import clippiti.services.mpv_args as mpv_mod
-from clippiti.services.mpv_args import build_mpv_options
+import clippiti.services.mpvargs as mpv_mod
+from clippiti.services.mpvargs import build_mpv_options
 
 
 def test_build_mpv_options_accepts_key_value_and_yaml() -> None:

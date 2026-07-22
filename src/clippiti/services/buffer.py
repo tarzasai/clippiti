@@ -11,7 +11,7 @@ import threading
 import time
 import ctypes
 
-from .sl_session import StreamMetadata, StreamPump, open_stream
+from .slsession import StreamMetadata, StreamPump, open_stream
 from streamlink.stream.stream import Stream
 
 

@@ -3,7 +3,7 @@ import logging
 import subprocess
 
 import clippiti.services.recording as recording_mod
-from clippiti.services.buffer_engine import SessionRuntime
+from clippiti.services.buffer import SessionRuntime
 from clippiti.services.recording import AsyncRecordingService
 from clippiti.services.recording import RecordingConfig
 from clippiti.services.recording import RecordingService
