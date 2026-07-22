@@ -514,7 +514,8 @@ class MainWindow(QMainWindow):
     if self._clip_workflow is None:
       self.osd.show_message("Clip", "Clip service not configured")
       return
-    self._clip_workflow.run_clip_dialog(self._runtime, self)
+    rotation = self.video.current_rotation()
+    self._clip_workflow.run_clip_dialog(self._runtime, self, rotation)
 
   def _settings_action(self) -> None:
     dialog = SettingsDialog(self._config, self)
@@ -568,6 +569,7 @@ class MainWindow(QMainWindow):
       ffmpeg_path=ffmpeg_path,
       default_duration=int(clip.get("default_duration", 30)),
       filename_format=str(clip.get("filename_format", "{author}.{timestamp}")),
+      auto_remux_to_mp4=bool(clip.get("auto_remux_to_mp4", True)),
     )
     self._clip_service = ClipService(self._clip_cfg)
     self._rebuild_clip_workflow()

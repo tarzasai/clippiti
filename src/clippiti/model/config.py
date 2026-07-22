@@ -22,6 +22,7 @@ DEFAULT_CONFIG: dict[str, object] = {
     "dir": "~/Videos/Clippiti/clips",
     "default_duration": 10,
     "filename_format": "{author}.{timestamp}",
+    "auto_remux_to_mp4": True,
   },
   "snapshot": {
     "dir": "~/Pictures/Clippiti/snapshots",

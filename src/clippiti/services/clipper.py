@@ -27,6 +27,7 @@ class ClipConfig:
   ffmpeg_path: str = "ffmpeg"
   default_duration: int = 30
   filename_format: str = "{author}.{timestamp}"
+  auto_remux_to_mp4: bool = True
 
 
 @dataclass
@@ -36,6 +37,18 @@ class ClipBufferStage:
   segments: list[tuple[Path, float]]
   total_seconds: float
   merged_ts_path: Path
+  # Working file used for previews and export. Defaults to merged_ts_path;
+  # when a rotation is active it is a remuxed copy carrying a lossless
+  # display-rotation flag so previews, the video player, and the exported clip
+  # all appear rotated to match the viewer.
+  preview_path: Path | None = None
+  # Clockwise rotation the viewer applied, kept so export can pick a container
+  # that can carry rotation (mkv) when MP4 output is disabled.
+  rotation: int = 0
+
+  def __post_init__(self) -> None:
+    if self.preview_path is None:
+      self.preview_path = self.merged_ts_path
 
 
 @dataclass
@@ -48,7 +61,7 @@ class ClipService:
   def __init__(self, config: ClipConfig) -> None:
     self._config = config
 
-  def prepare_stage(self, runtime: SessionRuntime) -> ClipBufferStage:
+  def prepare_stage(self, runtime: SessionRuntime, rotation: int = 0) -> ClipBufferStage:
     source_segments = self.parse_m3u8(runtime.playlist_path)
     if not source_segments:
       raise RuntimeError("No segments available in live playlist")
@@ -93,12 +106,49 @@ class ClipService:
         timeout=_STAGE_MERGE_TIMEOUT_S,
       )
 
+      # When the viewer rotated the stream, remux the merged file into a
+      # container that carries a lossless display-rotation flag. Everything
+      # downstream (preview frames, the video preview player, and the exported
+      # clip via -c copy) then inherits the rotation. mpv's video-rotate is
+      # clockwise while -display_rotation is counterclockwise, so it is negated.
+      preview_path = merged_ts_path
+      if rotation:
+        preview_path = stage_dir / "merged.mkv"
+        rotate_command = [
+          self._config.ffmpeg_path,
+          *_FFMPEG_QUIET,
+          "-y",
+          "-display_rotation",
+          str(-rotation),
+          "-i",
+          str(merged_ts_path),
+          "-map",
+          "0:v:0?",
+          "-map",
+          "0:a?",
+          "-sn",
+          "-dn",
+          "-c",
+          "copy",
+          str(preview_path),
+        ]
+        subprocess.run(
+          rotate_command,
+          check=True,
+          stdin=subprocess.DEVNULL,
+          stdout=subprocess.DEVNULL,
+          stderr=subprocess.DEVNULL,
+          timeout=_STAGE_MERGE_TIMEOUT_S,
+        )
+
       return ClipBufferStage(
         stage_dir=stage_dir,
         playlist_path=stage_playlist,
         segments=staged_segments,
         total_seconds=total_seconds,
         merged_ts_path=merged_ts_path,
+        preview_path=preview_path,
+        rotation=rotation,
       )
     except Exception:
       shutil.rmtree(stage_dir, ignore_errors=True)
@@ -127,29 +177,44 @@ class ClipService:
     if not selected:
       raise RuntimeError("No segments available for the requested clip range")
 
+    # Container matrix, mirroring the recording service: prefer MP4 when
+    # enabled; otherwise keep the lossless capture container (.ts), upgrading to
+    # .mkv when a rotation flag needs to be carried (.ts cannot store one).
+    if self._config.auto_remux_to_mp4:
+      suffix = ".mp4"
+    elif stage.rotation:
+      suffix = ".mkv"
+    else:
+      suffix = ".ts"
+
     output_path = self._build_output_path(
       stream_author,
       stream_category,
       stream_title,
+      suffix,
     )
     clip_seconds = end - start
+
+    arguments = [
+      *_FFMPEG_QUIET,
+      "-y",
+      "-ss",
+      f"{start:.3f}",
+      "-i",
+      str(stage.preview_path),
+      "-c",
+      "copy",
+      "-t",
+      f"{clip_seconds:.3f}",
+    ]
+    if suffix == ".mp4":
+      arguments += ["-movflags", "+faststart"]
+    arguments.append(str(output_path))
 
     return FfmpegJob(
       target_path=output_path,
       ffmpeg_path=self._config.ffmpeg_path,
-      arguments=[
-        *_FFMPEG_QUIET,
-        "-y",
-        "-ss",
-        f"{start:.3f}",
-        "-i",
-        str(stage.merged_ts_path),
-        "-c",
-        "copy",
-        "-t",
-        f"{clip_seconds:.3f}",
-        str(output_path),
-      ],
+      arguments=arguments,
       stderr_path=self._stderr_log_path(output_path),
       kind="clip",
       context=ClipExportContext(stage=stage, output_path=output_path),
@@ -208,7 +273,7 @@ class ClipService:
       "-ss",
       f"{safe_at:.3f}",
       "-i",
-      str(stage.merged_ts_path),
+      str(stage.preview_path),
       "-frames:v",
       "1",
       "-q:v",
@@ -230,7 +295,7 @@ class ClipService:
         "-y",
         *_FFMPEG_QUIET,
         "-i",
-        str(stage.merged_ts_path),
+        str(stage.preview_path),
         "-frames:v",
         "1",
         "-q:v",
@@ -255,6 +320,7 @@ class ClipService:
     stream_author: str,
     stream_category: str,
     stream_title: str,
+    suffix: str = ".mp4",
   ) -> Path:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     try:
@@ -274,7 +340,7 @@ class ClipService:
     stream_dir = re.sub(r"[^\w\-.]", "_", stream_author).strip("._") or "stream"
     output_dir = self._config.output_dir.expanduser() / stream_dir
     output_dir.mkdir(parents=True, exist_ok=True)
-    return output_dir / f"{safe_name}.mp4"
+    return output_dir / f"{safe_name}{suffix}"
 
   @staticmethod
   def _write_playlist_entries(playlist_path: Path, segments: list[tuple[Path, float]]) -> None:

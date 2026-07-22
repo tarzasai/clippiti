@@ -47,7 +47,7 @@ class SettingsDialog(QDialog):
 
   def __init__(self, config: dict[str, object], parent=None) -> None:
     super().__init__(parent)
-    self.setWindowTitle("Settings")
+    self.setWindowTitle("Clippiti Settings")
     self.setMinimumWidth(760)
     self.resize(self.minimumWidth(), 640)
 
@@ -117,6 +117,7 @@ class SettingsDialog(QDialog):
     clip["dir"] = self._clip_dir_input.text().strip() or str(clip.get("dir", ""))
     clip["default_duration"] = int(self._clip_duration_input.value())
     clip["filename_format"] = self._clip_filename_input.text().strip() or "{author}.{timestamp}"
+    clip["auto_remux_to_mp4"] = self._clip_remux_input.isChecked()
 
     snapshot["dir"] = self._snapshot_dir_input.text().strip() or str(snapshot.get("dir", ""))
     snapshot["filename_format"] = self._snapshot_filename_input.text().strip() or "{author}.{timestamp}"
@@ -260,7 +261,7 @@ class SettingsDialog(QDialog):
       str(recording.get("filename_format", "{author}.{timestamp}")),
       tab,
     )
-    self._recording_remux_input = QCheckBox("Auto remux the .ts file when the recording is finished", tab)
+    self._recording_remux_input = QCheckBox("Save video as MP4 (otherwise .ts, or .mkv when rotated)", tab)
     self._recording_remux_input.setChecked(bool(recording.get("auto_remux_to_mp4", False)))
 
     layout.addRow("", self._build_section_label("Recording", tab))
@@ -277,11 +278,14 @@ class SettingsDialog(QDialog):
       str(clip.get("filename_format", "{author}.{timestamp}")),
       tab,
     )
+    self._clip_remux_input = QCheckBox("Save clips as MP4 (otherwise .ts, or .mkv when rotated)", tab)
+    self._clip_remux_input.setChecked(bool(clip.get("auto_remux_to_mp4", True)))
 
     layout.addRow("", self._build_section_label("Clip", tab))
     layout.addRow("output dir", self._build_directory_row(self._clip_dir_input, "Select clip output folder"))
     layout.addRow("filename format", self._clip_filename_input)
     layout.addRow("default duration (s)", self._clip_duration_input)
+    layout.addRow("convert to MP4", self._clip_remux_input)
 
     # Snapshot
     self._snapshot_dir_input = QLineEdit(str(snapshot.get("dir", "")), tab)

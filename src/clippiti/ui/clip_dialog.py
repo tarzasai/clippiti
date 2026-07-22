@@ -407,7 +407,7 @@ class ClipWorkflow(QObject):
     self._is_player_muted = is_player_muted
     self._set_player_muted = set_player_muted
 
-  def run_clip_dialog(self, runtime: object, parent_widget: QWidget) -> None:
+  def run_clip_dialog(self, runtime: object, parent_widget: QWidget, rotation: int = 0) -> None:
     stage: ClipBufferStage | None = None
     dialog: ClipRangeDialog | None = None
     preview_timer: QTimer | None = None
@@ -417,7 +417,7 @@ class ClipWorkflow(QObject):
       self._show_message("Clip", "Preparing clip...", True)
       stage = self._run_task(
         parent_widget,
-        lambda: self._clip_service.prepare_stage(runtime),
+        lambda: self._clip_service.prepare_stage(runtime, rotation),
       )
       total_seconds = max(ClipRangeDialog.MIN_DURATION, int(stage.total_seconds + 0.999))
       end_seconds = total_seconds
@@ -428,7 +428,7 @@ class ClipWorkflow(QObject):
       dialog = ClipRangeDialog(stream_author, stream_category, parent_widget)
       dialog.set_timeline_max(total_seconds)
       dialog.set_selected_range(start_seconds, end_seconds)
-      dialog.set_video_source(stage.merged_ts_path)
+      dialog.set_video_source(stage.preview_path)
 
       preview_timer = QTimer(dialog)
       preview_timer.setSingleShot(True)

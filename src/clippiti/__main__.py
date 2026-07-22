@@ -246,6 +246,7 @@ def main(argv: list[str] | None = None) -> int:
     ffmpeg_path=ffmpeg_path,
     default_duration=int(config["clip"].get("default_duration", 30)),
     filename_format=str(config["clip"].get("filename_format", "{author}.{timestamp}")),
+    auto_remux_to_mp4=bool(config["clip"].get("auto_remux_to_mp4", True)),
   )
 
   try:
