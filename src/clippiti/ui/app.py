@@ -63,15 +63,16 @@ class FaviconWorker(QObject):
 class StartupWorker(QObject):
   finished = pyqtSignal(object)
   failed = pyqtSignal(object)
+  progress = pyqtSignal(object)
 
-  def __init__(self, startup_task: Callable[[], object]) -> None:
+  def __init__(self, startup_task: Callable[[Callable[[object], None]], object]) -> None:
     super().__init__()
     self._startup_task = startup_task
 
   @pyqtSlot()
   def run(self) -> None:
     try:
-      result = self._startup_task()
+      result = self._startup_task(self.progress.emit)
     except Exception as exc:
       self.failed.emit(exc)
       return
@@ -574,8 +575,9 @@ def run_app(
   recording_cfg: RecordingConfig | None = None,
   config: dict[str, object] | None = None,
   config_path: Path | None = None,
-  startup_task: Callable[[], object] | None = None,
+  startup_task: Callable[[Callable[[object], None]], object] | None = None,
   on_startup_ready: Callable[[MainWindow, object], None] | None = None,
+  on_startup_progress: Callable[[MainWindow, object], None] | None = None,
   on_startup_failed: Callable[[Exception], None] | None = None,
   on_startup_cancel: Callable[[], None] | None = None,
 ) -> AppRunResult:
@@ -632,8 +634,13 @@ def run_app(
       if not startup_completed and on_startup_cancel is not None:
         on_startup_cancel()
 
+    def handle_startup_progress(payload: object) -> None:
+      if on_startup_progress is not None:
+        on_startup_progress(window, payload)
+
     startup_worker.finished.connect(handle_startup_success)
     startup_worker.failed.connect(handle_startup_failure)
+    startup_worker.progress.connect(handle_startup_progress)
     app.aboutToQuit.connect(request_startup_cancel)
 
   window.show()

@@ -172,35 +172,28 @@ def main(argv: list[str] | None = None) -> int:
   )
   log.info("effective mpv options: %s", mpv_options)
 
-  session = create_session()
-  try:
+  startup_cancel = threading.Event()
+
+  # Stream resolution (Streamlink plugin lookup) can be slow, notably on Twitch proxies.
+  # Run it inside the background startup task so the window shows immediately.
+  def startup_pipeline(report_metadata):
+    session = create_session()
     resolved = resolve_stream(
       session=session,
       url=args.url,
       quality=args.quality,
       tokens=streamlink_tokens,
     )
-  except Exception as exc:
-    log.error("error: stream resolution failed (offline/private/bad args?): %s", exc)
-    if not diagnostics_logged:
-      diagnostics_logged = True
-      log_startup_diagnostics(log, ffmpeg_path)
-    return 2
-
-  metadata = resolved.metadata
-  log.info(
-    "metadata: plugin=%s author=%s category=%s title=%s",
-    metadata.plugin,
-    metadata.author,
-    metadata.category,
-    metadata.title,
-  )
-
-  window_title = f"{metadata.author} - {metadata.title} - {metadata.category} [{metadata.plugin}] - clippiti"
-
-  startup_cancel = threading.Event()
-
-  def startup_pipeline():
+    metadata = resolved.metadata
+    log.info(
+      "metadata: plugin=%s author=%s category=%s title=%s",
+      metadata.plugin,
+      metadata.author,
+      metadata.category,
+      metadata.title,
+    )
+    # Update the window title/icon now; buffer startup below adds several seconds.
+    report_metadata(metadata)
     return start_single_session_pipeline(
       workdir=workdir,
       ffmpeg_path=ffmpeg_path,
@@ -213,6 +206,15 @@ def main(argv: list[str] | None = None) -> int:
       cancel_event=startup_cancel,
     )
 
+  def handle_metadata_ready(window: MainWindow, metadata_obj: object) -> None:
+    metadata = metadata_obj
+    window_title = (
+      f"{metadata.author} - {metadata.title} - "
+      f"{metadata.category} [{metadata.plugin}] - clippiti"
+    )
+    window.set_window_title(window_title)
+    window.set_stream_icon(args.url, metadata.plugin)
+
   def handle_runtime_ready(window: MainWindow, ready_runtime: SessionRuntime) -> None:
     nonlocal runtime
     runtime = ready_runtime
@@ -223,14 +225,13 @@ def main(argv: list[str] | None = None) -> int:
       log.debug("ffmpeg_stderr: %s", runtime.ffmpeg_stderr_path)
     window.set_runtime(runtime)
     window.set_media_source(str(runtime.playlist_path))
-    window.set_stream_icon(args.url, metadata.plugin)
 
   def handle_runtime_failure(exc: Exception) -> None:
     nonlocal diagnostics_logged
     if str(exc) == "buffer pipeline startup cancelled":
       log.debug("buffer pipeline startup cancelled")
       return
-    log.error("error: failed to start buffer pipeline: %s", exc)
+    log.error("error: startup failed (offline/private/bad args?): %s", exc)
     if not diagnostics_logged:
       diagnostics_logged = True
       log_startup_diagnostics(log, ffmpeg_path)
@@ -255,13 +256,13 @@ def main(argv: list[str] | None = None) -> int:
       mpv_options=mpv_options,
       trigger_radius=trigger_radius,
       resize_debounce_ms=resize_debounce_ms,
-      window_title=window_title,
       clip_cfg=clip_cfg,
       recording_cfg=recording_cfg,
       config=config,
       config_path=config_path,
       startup_task=startup_pipeline,
       on_startup_ready=handle_runtime_ready,
+      on_startup_progress=handle_metadata_ready,
       on_startup_failed=handle_runtime_failure,
       on_startup_cancel=startup_cancel.set,
     )
