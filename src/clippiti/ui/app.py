@@ -64,15 +64,19 @@ class StartupWorker(QObject):
   finished = pyqtSignal(object)
   failed = pyqtSignal(object)
   progress = pyqtSignal(object)
+  status = pyqtSignal(str)
 
-  def __init__(self, startup_task: Callable[[Callable[[object], None]], object]) -> None:
+  def __init__(
+    self,
+    startup_task: Callable[[Callable[[str], None], Callable[[object], None]], object],
+  ) -> None:
     super().__init__()
     self._startup_task = startup_task
 
   @pyqtSlot()
   def run(self) -> None:
     try:
-      result = self._startup_task(self.progress.emit)
+      result = self._startup_task(self.status.emit, self.progress.emit)
     except Exception as exc:
       self.failed.emit(exc)
       return
@@ -144,7 +148,7 @@ class MainWindow(QMainWindow):
 
     self.osd = OsdOverlay(self.video)
     if not media_source:
-      self.osd.show_message("loading stream", persistent=True)
+      self.osd.show_message("Starting\u2026", persistent=True)
 
     self.strip = ControlStrip(
       self.video,
@@ -575,10 +579,11 @@ def run_app(
   recording_cfg: RecordingConfig | None = None,
   config: dict[str, object] | None = None,
   config_path: Path | None = None,
-  startup_task: Callable[[Callable[[object], None]], object] | None = None,
+  startup_task: Callable[[Callable[[str], None], Callable[[object], None]], object] | None = None,
   on_startup_ready: Callable[[MainWindow, object], None] | None = None,
   on_startup_progress: Callable[[MainWindow, object], None] | None = None,
-  on_startup_failed: Callable[[Exception], None] | None = None,
+  on_startup_status: Callable[[MainWindow, str], None] | None = None,
+  on_startup_failed: Callable[[MainWindow, Exception], None] | None = None,
   on_startup_cancel: Callable[[], None] | None = None,
 ) -> AppRunResult:
   app = QApplication(sys.argv)
@@ -626,7 +631,7 @@ def run_app(
       nonlocal startup_completed
       startup_completed = True
       if on_startup_failed is not None:
-        on_startup_failed(exc)
+        on_startup_failed(window, exc)
       startup_thread.quit()
       app.exit(3)
 
@@ -638,9 +643,14 @@ def run_app(
       if on_startup_progress is not None:
         on_startup_progress(window, payload)
 
+    def handle_startup_status(message: str) -> None:
+      if on_startup_status is not None:
+        on_startup_status(window, message)
+
     startup_worker.finished.connect(handle_startup_success)
     startup_worker.failed.connect(handle_startup_failure)
     startup_worker.progress.connect(handle_startup_progress)
+    startup_worker.status.connect(handle_startup_status)
     app.aboutToQuit.connect(request_startup_cancel)
 
   window.show()

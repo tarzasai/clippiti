@@ -32,6 +32,8 @@ from .services.mpvargs import build_mpv_options
 from .services.clipper import ClipConfig
 from .services.recording import RecordingConfig
 from .ui.app import run_app
+from PyQt6.QtWidgets import QApplication, QMessageBox, QWidget
+from streamlink.exceptions import NoPluginError, StreamlinkError
 from wakepy import keep as _wakepy_keep
 
 if TYPE_CHECKING:
@@ -58,6 +60,37 @@ def configure_logging(verbose: bool) -> logging.Logger:
   logger = logging.getLogger("clippiti")
   logger.setLevel(level)
   return logger
+
+
+def friendly_error_message(exc: BaseException) -> str:
+  """Map an exception (unwrapping resolve_stream's RuntimeError) to a user message."""
+  origin = exc.__cause__ or exc
+  if isinstance(origin, NoPluginError):
+    return "No Streamlink plugin found for this stream."
+  if isinstance(origin, StreamlinkError):
+    return f"Streamlink error: {exc}"
+  return f"{exc}"
+
+
+def show_error_dialog(message: str, parent: QWidget | None = None) -> None:
+  # A parented (transient) dialog lets window-manager rules distinguish it from the main window.
+  if parent is None:
+    parent = QApplication.activeWindow()
+  try:
+    QMessageBox.critical(parent, "Clippiti Error", message)
+  except Exception:
+    logging.getLogger("clippiti").debug("failed to show error dialog", exc_info=True)
+
+
+def install_excepthook() -> None:
+  def excepthook(exc_type, exc_value, exc_tb):
+    logging.getLogger("clippiti").critical(
+      "uncaught exception", exc_info=(exc_type, exc_value, exc_tb)
+    )
+    message = friendly_error_message(exc_value) if exc_value is not None else f"Error: {exc_type}"
+    show_error_dialog(message)
+
+  sys.excepthook = excepthook
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -136,6 +169,7 @@ def log_startup_diagnostics(log: logging.Logger, ffmpeg_path: str) -> None:
 def main(argv: list[str] | None = None) -> int:
   args, streamlink_argv = parse_args(argv)
   log = configure_logging(args.verbose)
+  install_excepthook()
   runtime: SessionRuntime | None = None
   diagnostics_logged = False
 
@@ -176,8 +210,10 @@ def main(argv: list[str] | None = None) -> int:
 
   # Stream resolution (Streamlink plugin lookup) can be slow, notably on Twitch proxies.
   # Run it inside the background startup task so the window shows immediately.
-  def startup_pipeline(report_metadata):
+  def startup_pipeline(report_status, report_metadata):
+    report_status("Preparing Streamlink\u2026")
     session = create_session()
+    report_status("Resolving stream\u2026")
     resolved = resolve_stream(
       session=session,
       url=args.url,
@@ -204,7 +240,11 @@ def main(argv: list[str] | None = None) -> int:
       window_segments=window_segments,
       metadata=metadata,
       cancel_event=startup_cancel,
+      report=report_status,
     )
+
+  def handle_startup_status(window: MainWindow, message: str) -> None:
+    window.osd.show_message(message, persistent=True)
 
   def handle_metadata_ready(window: MainWindow, metadata_obj: object) -> None:
     metadata = metadata_obj
@@ -226,7 +266,7 @@ def main(argv: list[str] | None = None) -> int:
     window.set_runtime(runtime)
     window.set_media_source(str(runtime.playlist_path))
 
-  def handle_runtime_failure(exc: Exception) -> None:
+  def handle_runtime_failure(window: MainWindow, exc: Exception) -> None:
     nonlocal diagnostics_logged
     if str(exc) == "buffer pipeline startup cancelled":
       log.debug("buffer pipeline startup cancelled")
@@ -235,6 +275,7 @@ def main(argv: list[str] | None = None) -> int:
     if not diagnostics_logged:
       diagnostics_logged = True
       log_startup_diagnostics(log, ffmpeg_path)
+    show_error_dialog(friendly_error_message(exc), window)
 
   recording_cfg = RecordingConfig(
     output_dir=Path(str(config["recording"]["dir"])).expanduser(),
@@ -263,6 +304,7 @@ def main(argv: list[str] | None = None) -> int:
       startup_task=startup_pipeline,
       on_startup_ready=handle_runtime_ready,
       on_startup_progress=handle_metadata_ready,
+      on_startup_status=handle_startup_status,
       on_startup_failed=handle_runtime_failure,
       on_startup_cancel=startup_cancel.set,
     )

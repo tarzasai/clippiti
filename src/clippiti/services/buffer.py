@@ -1,5 +1,6 @@
 """Buffer engine: single-session rolling HLS pipeline (Streamlink API -> ffmpeg)."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 import logging
 from pathlib import Path
@@ -94,6 +95,7 @@ def start_single_session_pipeline(
   metadata: StreamMetadata,
   startup_timeout_s: int = 25,
   cancel_event: threading.Event | None = None,
+  report: Callable[[str], None] | None = None,
 ) -> SessionRuntime:
   segment_seconds = max(1, int(segment_seconds))
   window_segments = max(2, int(window_segments))
@@ -140,6 +142,8 @@ def start_single_session_pipeline(
 
   # Open the Streamlink stream first so an offline/broken stream fails fast
   # before we spawn ffmpeg.
+  if report is not None:
+    report("Opening stream\u2026")
   stream_fd, prebuffer = open_stream(stream)
   log.debug("buffer_engine: stream opened, prebuffer=%d bytes", len(prebuffer))
 
@@ -148,6 +152,8 @@ def start_single_session_pipeline(
 
   try:
     child_kwargs = _child_process_kwargs()
+    if report is not None:
+      report("Starting buffer\u2026")
     ffmpeg_proc = subprocess.Popen(
       ffmpeg_cmd,
       stdin=subprocess.PIPE,
@@ -196,6 +202,8 @@ def start_single_session_pipeline(
 
   deadline = time.monotonic() + max(1, startup_timeout_s)
   log.debug("buffer_engine: waiting for playlist readiness timeout=%ss path=%s", max(1, startup_timeout_s), playlist_path)
+  if report is not None:
+    report("Buffering video\u2026")
   while time.monotonic() < deadline:
     if cancel_event is not None and cancel_event.is_set():
       log.debug("buffer_engine: pipeline startup cancelled while waiting for playlist readiness")
