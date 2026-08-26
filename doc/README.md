@@ -9,6 +9,7 @@ This folder contains the technical documentation for the current Clippiti archit
 - [Module Reference](module-reference.md)
 - [Configuration and CLI](configuration-and-cli.md)
 - [Operations and Troubleshooting](operations-and-troubleshooting.md)
+- [Resource Footprint](resource-footprint.md)
 
 ## Scope
 

@@ -22,6 +22,7 @@ ALLOWLISTED_MPV_OPTIONS = {
   "sub_auto",
   "sub_delay",
   "audio_delay",
+  "vd_lavc_threads",
 }
 
 FORCED_MPV_OPTIONS = {
@@ -33,6 +34,25 @@ FORCED_MPV_OPTIONS = {
   "keep_open": "yes",
   "loop_file": "inf",
   "terminal": False,
+}
+
+# Footprint reducers. Clippiti feeds mpv a local, already-buffered rolling HLS
+# window and drives it programmatically, so mpv's built-in Lua scripts, the ytdl
+# hook, and the large default network demuxer cache are pure overhead: each
+# built-in script runs its own thread, and the demuxer cache dominates RAM. Clips
+# and snapshots read the on-disk .ts segments, so shrinking mpv's cache is safe.
+LIGHTWEIGHT_MPV_OPTIONS = {
+  "ytdl": False,
+  "load_scripts": False,
+  "load_stats_overlay": False,
+  "load_console": False,
+  "load_auto_profiles": "no",
+  "load_commands": False,
+  "load_select": False,
+  "load_positioning": False,
+  "load_context_menu": False,
+  "demuxer_max_bytes": "32MiB",
+  "demuxer_max_back_bytes": "16MiB",
 }
 
 BLOCKED_MPV_OPTIONS = {
@@ -78,6 +98,9 @@ def build_mpv_options(
 
   # Apply forced options (locked by application)
   filtered.update(FORCED_MPV_OPTIONS)
+
+  # Apply footprint reducers last (they are application policy too).
+  filtered.update(LIGHTWEIGHT_MPV_OPTIONS)
 
   return filtered
 

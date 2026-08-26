@@ -15,7 +15,16 @@ DEFAULT_CONFIG: dict[str, object] = {
     "controls_resize_debounce_ms": 40,
     "controls_position": "bottom-right-vertical",
     "mpv_options": {
-      "hwdec": "auto-safe",
+      # auto-copy: hardware-decode on the GPU but copy frames back to system RAM.
+      # The copy is required so snapshots (mpv software screenshot + Pillow
+      # rotation) still work; zero-copy hwdec surfaces break rotated snapshots.
+      # It also sidesteps the libmpv render API needing a native display handle
+      # to build a VADisplay for the zero-copy interop path.
+      "hwdec": "auto-copy",
+      # Fallback only: when no hardware decoder is available mpv decodes in
+      # software; cap its threads (default 0 = one per core -> up to 16) to keep
+      # the footprint down. Ignored while hardware decoding is active.
+      "vd_lavc_threads": 4,
     },
   },
   "clip": {

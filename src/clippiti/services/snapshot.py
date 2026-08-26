@@ -13,6 +13,7 @@ from collections.abc import Callable
 import logging
 import shutil
 import tempfile
+import time
 
 from PyQt6.QtCore import QObject, pyqtSignal
 from PIL import Image
@@ -95,8 +96,11 @@ class SnapshotService(QObject):
 
     temp_output = stage_dir / "frame.png"
 
+    t_start = time.monotonic()
+
     def _finalize(ok: bool) -> None:
       # Invoked on mpv's event thread; Qt signals queue to the GUI thread.
+      t_captured = time.monotonic()
       if not ok:
         log.warning("snapshot: mpv screenshot failed")
         shutil.rmtree(stage_dir, ignore_errors=True)
@@ -106,6 +110,7 @@ class SnapshotService(QObject):
       moved = False
       try:
         _orient(temp_output, rotation)
+        t_oriented = time.monotonic()
         output_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(temp_output), str(output_path))
         moved = True
@@ -116,7 +121,13 @@ class SnapshotService(QObject):
         shutil.rmtree(stage_dir, ignore_errors=True)
 
       if moved:
-        log.info("snapshot: saved output=%s", output_path)
+        log.info(
+          "snapshot: saved output=%s timing capture=%dms rotate=%dms total=%dms",
+          output_path,
+          int((t_captured - t_start) * 1000),
+          int((t_oriented - t_captured) * 1000),
+          int((time.monotonic() - t_start) * 1000),
+        )
         self.snapshot_ready.emit(str(output_path))
 
     if not self._player.save_screenshot(temp_output, _finalize):

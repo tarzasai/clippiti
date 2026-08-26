@@ -47,7 +47,9 @@ Default workdir:
 ## Main Config Sections
 
 - `general`
-  - `ffmpeg_path`, `segment_seconds`, `window_segments`, `controls_area`, `controls_resize_debounce_ms`, `mpv_options`
+  - `ffmpeg_path`, `segment_seconds`, `window_segments`, `controls_area`, `controls_resize_debounce_ms`, `controls_position`, `mpv_options`
+  - `controls_position` accepts one of: `top-left-horizontal`, `top-left-vertical`, `top-right-horizontal`, `top-right-vertical`, `bottom-left-horizontal`, `bottom-left-vertical`, `bottom-right-horizontal`, `bottom-right-vertical` (default `bottom-right-vertical`); an unknown value falls back to the default.
+  - `mpv_options` defaults to `hwdec: auto-copy` and `vd_lavc_threads: 4`; see [Resource Footprint](resource-footprint.md) for the rationale.
 - `streamlink`
   - `default_args` (string of Streamlink options, merged before any `--` passthrough args)
 - `clip`

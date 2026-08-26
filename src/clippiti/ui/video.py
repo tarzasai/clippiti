@@ -11,6 +11,8 @@ from PyQt6.QtOpenGLWidgets import QOpenGLWidget
 
 import mpv
 
+from ..services.mpvargs import LIGHTWEIGHT_MPV_OPTIONS
+
 log = logging.getLogger("clippiti")
 
 # libmpv requires C numeric locale (decimal dot) and can crash otherwise.
@@ -135,7 +137,7 @@ class VideoSurface(QOpenGLWidget):
     # (still hardware-decoded and GPU-rendered).
     player_options["screenshot_sw"] = "yes"
 
-    self.player = mpv.MPV(**player_options)
+    self.player = self._create_player(player_options)
     self._install_decoder_logging()
 
     self._gl_proc_addr = mpv.MpvGlGetProcAddressFn(self._get_proc_addr)
@@ -149,6 +151,22 @@ class VideoSurface(QOpenGLWidget):
 
     if self._media_source:
       self._play_media_source(self._media_source)
+
+  def _create_player(self, player_options: dict[str, object]) -> mpv.MPV:
+    """Construct the mpv instance, tolerating older libmpv builds.
+
+    The footprint-reducing options are only guaranteed on recent mpv releases;
+    if this libmpv rejects one at construction, retry without them rather than
+    failing to create the player.
+    """
+    try:
+      return mpv.MPV(**player_options)
+    except Exception:
+      reduced = {k: v for k, v in player_options.items() if k not in LIGHTWEIGHT_MPV_OPTIONS}
+      if len(reduced) == len(player_options):
+        raise
+      log.warning("video: mpv rejected footprint options; retrying with defaults", exc_info=True)
+      return mpv.MPV(**reduced)
 
   def _install_decoder_logging(self) -> None:
     if self.player is None:
