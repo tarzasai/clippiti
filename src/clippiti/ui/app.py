@@ -6,7 +6,6 @@ from pathlib import Path
 import sys
 import logging
 from copy import deepcopy
-from typing import TYPE_CHECKING
 
 from pathlib import Path as _Path
 
@@ -27,10 +26,8 @@ from ..services.clipper import ClipConfig, ClipService
 from ..services.recording import AsyncRecordingService, RecordingConfig
 from ..services.remuxer import FfmpegJobResult, RemuxQueueService
 from ..services.snapshot import SnapshotConfig, SnapshotService
+from ..services.buffer import SessionRuntime
 from ..app_context import AppContext
-
-if TYPE_CHECKING:
-  from ..services.buffer import SessionRuntime
 
 log = logging.getLogger("clippiti")
 
