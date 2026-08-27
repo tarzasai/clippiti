@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 import os
 import shlex
+import signal
 import sys
 import threading
 import shutil
@@ -56,6 +57,21 @@ def configure_logging(verbose: bool) -> logging.Logger:
   logger = logging.getLogger("clippiti")
   logger.setLevel(level)
   return logger
+
+
+def reset_child_signal_disposition() -> None:
+  """Restore the default SIGCHLD disposition inherited from a parent launcher.
+
+  Launchers (e.g. lurkiti) often set SIGCHLD to SIG_IGN to auto-reap children.
+  That disposition survives exec(), and under it Qt's QProcess cannot wait for
+  its ffmpeg child, so clip export is wrongly reported as failed.
+  """
+  if not hasattr(signal, "SIGCHLD"):
+    return
+  try:
+    signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+  except (ValueError, OSError):
+    pass
 
 
 def friendly_error_message(exc: BaseException) -> str:
@@ -166,6 +182,7 @@ def main(argv: list[str] | None = None) -> int:
   args, streamlink_argv = parse_args(argv)
   log = configure_logging(args.verbose)
   install_excepthook()
+  reset_child_signal_disposition()
   runtime: SessionRuntime | None = None
   diagnostics_logged = False
 

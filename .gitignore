@@ -42,6 +42,9 @@ htmlcov/
 *.stderr.log
 src/clippiti/_version.py
 
+# Local-only tooling / scratch scripts
+/tools/
+
 # OS
 .DS_Store
 Thumbs.db
