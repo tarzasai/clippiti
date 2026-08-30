@@ -352,12 +352,12 @@ class MainWindow(QMainWindow):
     self.strip.set_audio_ui_state(self.video.volume, self.video.muted)
 
   def _adjust_volume(self, delta: int) -> bool:
+    if self.video.muted:
+      return False
     new_volume = max(0, min(100, self.video.volume + delta))
     if new_volume == self.video.volume:
       return False
     self.video.volume = new_volume
-    if self.video.volume > 0 and self.video.muted:
-      self.video.muted = False
     self._apply_audio_state()
     self.osd.show_message(self._volume_osd_title())
     return True
