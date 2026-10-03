@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QToolBa
 class ControlStrip(QFrame):
   BTN_SIZE = 56
   ICON_SIZE = 28
+  MIN_BTN_SIZE = 24
   MARGIN = 12
   ANIM_MS = 180
   TOTAL = 8
@@ -45,6 +46,8 @@ class ControlStrip(QFrame):
     self._trigger_radius = max(50, trigger_radius)
     self._state_idx = 0
     self._hovering = False
+    self._btn_size = self.BTN_SIZE
+    self._icon_size = self.ICON_SIZE
     self._volume = 70
     self._muted = False
     self._pinned = False
@@ -144,8 +147,9 @@ class ControlStrip(QFrame):
 
   def _place_buttons(self) -> None:
     edge = self.STATES[self._state_idx][0]
-    B = self.BTN_SIZE
     is_horiz = edge in ("left", "right")
+    self._recompute_button_size(is_horiz)
+    B = self._btn_size
     reverse = edge in ("left", "top")
 
     desired = [self._actions[i] for i in (reversed(range(self.TOTAL)) if reverse else range(self.TOTAL))]
@@ -157,11 +161,12 @@ class ControlStrip(QFrame):
         self._toolbar.addAction(action)
 
     self._toolbar.setOrientation(Qt.Orientation.Horizontal if is_horiz else Qt.Orientation.Vertical)
+    self._toolbar.setIconSize(QSize(self._icon_size, self._icon_size))
 
     for action in self._toolbar.actions():
       widget = self._toolbar.widgetForAction(action)
       if widget:
-        widget.setFixedSize(self.BTN_SIZE, self.BTN_SIZE)
+        widget.setFixedSize(B, B)
         set_auto_raise = getattr(widget, "setAutoRaise", None)
         if callable(set_auto_raise):
           set_auto_raise(False)
@@ -172,13 +177,30 @@ class ControlStrip(QFrame):
     base_h = B if is_horiz else self.TOTAL * B
     self.setFixedSize(max(base_w, hint.width()), max(base_h, hint.height()))
 
+  def _recompute_button_size(self, is_horiz: bool) -> None:
+    """Shrink buttons so the strip fits inside the parent along its long axis."""
+    parent = self.parentWidget()
+    if parent is None:
+      self._btn_size = self.BTN_SIZE
+      self._icon_size = self.ICON_SIZE
+      return
+    long_extent = parent.width() if is_horiz else parent.height()
+    available = long_extent - 2 * self.MARGIN
+    needed = self.TOTAL * self.BTN_SIZE
+    btn = self.BTN_SIZE
+    if needed > 0 and available < needed:
+      btn = max(self.MIN_BTN_SIZE, int(available / self.TOTAL))
+      btn = min(self.BTN_SIZE, btn)
+    self._btn_size = btn
+    self._icon_size = max(8, round(self.ICON_SIZE * btn / self.BTN_SIZE))
+
   def _collapsed_pos(self) -> QPoint:
     p = self.parentWidget()
     if p is None:
       return QPoint(0, 0)
     pw, ph = p.width(), p.height()
     edge, side = self.STATES[self._state_idx]
-    M, B = self.MARGIN, self.BTN_SIZE
+    M, B = self.MARGIN, self._btn_size
     V = self._collapsed_visible_buttons()
     H = self.TOTAL - V
 
@@ -201,7 +223,7 @@ class ControlStrip(QFrame):
       return QPoint(0, 0)
     pw, ph = p.width(), p.height()
     edge, side = self.STATES[self._state_idx]
-    M, B, T = self.MARGIN, self.BTN_SIZE, self.TOTAL
+    M, B, T = self.MARGIN, self._btn_size, self.TOTAL
 
     if edge == "right":
       return QPoint(pw - T * B, M if side == "top" else ph - B - M)
