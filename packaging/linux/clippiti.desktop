@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Clippiti
+Comment=Single-stream live player with rolling buffer, clipping, and recording
+Exec=clippiti %U
+Icon=clippiti
+Categories=AudioVideo;Video;Player;
+Terminal=false

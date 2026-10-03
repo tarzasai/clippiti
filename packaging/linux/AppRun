@@ -1,0 +1,7 @@
+#!/bin/bash
+# AppImage entrypoint. The PyInstaller onedir payload lives in usr/bin/clippiti.
+HERE="$(dirname "$(readlink -f "${0}")")"
+APPBIN="${HERE}/usr/bin/clippiti"
+# Bundled libmpv (and its deps) live in the PyInstaller _internal dir.
+export LD_LIBRARY_PATH="${APPBIN}/_internal:${APPBIN}:${LD_LIBRARY_PATH}"
+exec "${APPBIN}/clippiti" "$@"

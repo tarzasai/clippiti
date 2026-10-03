@@ -163,6 +163,18 @@ def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[
   return build_parser().parse_args(clippiti_argv), streamlink_argv
 
 
+def resolve_ffmpeg_path(configured: str) -> str:
+  """In frozen builds, prefer an ffmpeg bundled next to the executable."""
+  if configured != "ffmpeg" or not getattr(sys, "frozen", False):
+    return configured
+  exe_name = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+  candidates = [Path(getattr(sys, "_MEIPASS", "")) / exe_name, Path(sys.executable).parent / exe_name]
+  for candidate in candidates:
+    if candidate.is_file():
+      return str(candidate)
+  return configured
+
+
 def log_startup_diagnostics(log: logging.Logger, ffmpeg_path: str) -> None:
   """Log dependency diagnostics, intended for startup failure paths only."""
   ffmpeg_bin = shutil.which(ffmpeg_path)
@@ -210,6 +222,7 @@ def main(argv: list[str] | None = None) -> int:
   trigger_radius = int(general.get("controls_area", 300))
   resize_debounce_ms = int(general.get("controls_resize_debounce_ms", 40))
   ffmpeg_path = str(general.get("ffmpeg_path", "ffmpeg"))
+  ffmpeg_path = resolve_ffmpeg_path(ffmpeg_path)
   segment_seconds = int(general.get("segment_seconds", 5))
   window_segments = int(general.get("window_segments", 12))
 
