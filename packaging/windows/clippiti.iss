@@ -15,7 +15,8 @@ AppPublisher=Tarzasai
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
-OutputDir=dist\installer
+; Paths are anchored to the repo root ({#SourcePath} is this .iss file's dir).
+OutputDir={#SourcePath}..\..\dist\installer
 OutputBaseFilename=clippiti-{#MyAppVersion}-setup
 Compression=lzma2
 SolidCompression=yes
@@ -26,7 +27,7 @@ WizardStyle=modern
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional icons:"; Flags: unchecked
 
 [Files]
-Source: "dist\clippiti\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "{#SourcePath}..\..\dist\clippiti\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
