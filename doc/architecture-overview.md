@@ -1,7 +1,6 @@
 # Architecture Overview
 
-Clippiti is a desktop application built with PyQt6 and python-mpv.
-It uses the Streamlink Python API and ffmpeg to build a local rolling HLS buffer, then plays the local playlist through mpv.
+Clippiti is a desktop application built with PyQt6 and python-mpv. It uses the Streamlink Python API and ffmpeg to build a local rolling HLS buffer, then plays the local playlist through mpv.
 
 ## High-Level Structure
 
