@@ -10,16 +10,6 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE"]
-dependencies = [
-    "python-mpv>=1.0.7",
-    "PyQt6>=6.6.0",
-    "PyYAML>=6.0",
-    "streamlink>=6.0",
-    "wakepy>=1.0.0",
-    "requests>=2.32.0",
-    "beautifulsoup4>=4.12.0",
-    "Pillow>=10.0.0",
-]
 authors = [
     { name = "Tarzasai" },
 ]
@@ -43,14 +33,23 @@ classifiers = [
     "Topic :: Utilities",
 ]
 
+dependencies = [
+    "python-mpv>=1.0.7",
+    "PyQt6>=6.10.0",
+    "PyYAML>=6.0",
+    "streamlink>=8.0.0",
+    "wakepy>=1.0.0",
+    "requests>=2.32.5",
+    "beautifulsoup4>=4.14.2",
+    "Pillow>=12.0.0",
+]
+
 [project.scripts]
 clippiti = "clippiti.__main__:main"
 
-[tool.setuptools]
-packages = ["clippiti"]
-
-[tool.setuptools.package-dir]
-"" = "src"
+[project.urls]
+Repository = "https://github.com/tarzasai/Clippiti"
+Issues = "https://github.com/tarzasai/Clippiti/issues"
 
 [tool.setuptools_scm]
 version_scheme = "no-guess-dev"
