@@ -2,7 +2,7 @@
 python-mpv>=1.0.7
 PyQt6==6.11.0
 PyYAML>=6.0
-streamlink==8.5.0
+streamlink==8.6.2
 wakepy>=1.0.0
 requests==2.34.2
 beautifulsoup4==4.15.0
