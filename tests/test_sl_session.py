@@ -1,3 +1,4 @@
+import errno
 import threading
 import time
 
@@ -252,9 +253,126 @@ def test_stream_pump_stop_does_not_block_on_slow_close() -> None:
   assert pump.poll() == 0
 
   release.set()
-  pump._close_thread.join(timeout=2.0)
+  pump._close_async(fd).join(timeout=2.0)
   assert pump.close_pending is False
   assert fd.closed is True
+
+
+def _run_pump(pump: StreamPump) -> None:
+  pump.start()
+  pump._thread.join(timeout=5.0)
+  assert not pump.is_alive()
+
+
+def test_stream_pump_reconnects_after_eof() -> None:
+  first = _FakeFd([b"one"])
+  second = _FakeFd([b"three"])
+  stdin = _FakeStdin()
+  reopened = []
+
+  def reopen():
+    reopened.append(True)
+    if len(reopened) == 1:
+      return second, b"two"
+    raise ss.StreamOfflineError("offline")
+
+  pump = StreamPump(first, stdin, reopen=reopen)
+  _run_pump(pump)
+
+  assert bytes(stdin.data) == b"onetwothree"
+  assert pump.reconnect_count == 1
+  assert pump.poll() == 0
+  assert pump.error is None
+  assert first.closed is True
+  assert second.closed is True
+
+
+def test_stream_pump_retries_transient_reopen_failures() -> None:
+  attempts = []
+  stdin = _FakeStdin()
+
+  def reopen():
+    attempts.append(True)
+    if len(attempts) < 3:
+      raise RuntimeError("network down")
+    if len(attempts) == 3:
+      return _FakeFd([b"b"]), b""
+    raise ss.StreamOfflineError("offline")
+
+  pump = StreamPump(_FakeFd([b"a"]), stdin, reopen=reopen, reconnect_max_delay_s=0.01)
+  pump._stop.wait = lambda timeout=None: False
+  _run_pump(pump)
+
+  assert bytes(stdin.data) == b"ab"
+  assert len(attempts) == 4
+  assert pump.reconnect_count == 1
+  assert pump.poll() == 0
+
+
+def test_stream_pump_gives_up_after_reconnect_window() -> None:
+  def reopen():
+    raise RuntimeError("network down")
+
+  pump = StreamPump(_FakeFd([b"a"]), _FakeStdin(), reopen=reopen, reconnect_window_s=0.0)
+  _run_pump(pump)
+
+  assert pump.poll() == 1
+  assert "network down" in (pump.error or "")
+  assert pump.reconnecting is False
+
+
+def test_stream_pump_no_reconnect_when_output_closed() -> None:
+  class _BrokenStdin(_FakeStdin):
+    def write(self, chunk):
+      raise BrokenPipeError(errno.EPIPE, "broken pipe")
+
+  def reopen():
+    raise AssertionError("must not reconnect")
+
+  pump = StreamPump(_FakeFd([b"a"]), _BrokenStdin(), reopen=reopen)
+  _run_pump(pump)
+
+  assert pump.poll() == 0
+
+
+def test_stream_pump_stop_during_reconnect_closes_new_stream() -> None:
+  new_fd = _FakeFd([b"late"])
+  entered = threading.Event()
+  proceed = threading.Event()
+
+  def reopen():
+    entered.set()
+    proceed.wait(timeout=5.0)
+    return new_fd, b""
+
+  stdin = _FakeStdin()
+  pump = StreamPump(_FakeFd([b"a"]), stdin, reopen=reopen)
+  pump.start()
+  assert entered.wait(timeout=2.0)
+  assert pump.reconnecting is True
+
+  pump._stop.set()
+  proceed.set()
+  pump._thread.join(timeout=2.0)
+  pump._close_async(new_fd).join(timeout=2.0)
+
+  assert bytes(stdin.data) == b"a"
+  assert new_fd.closed is True
+  assert pump.reconnect_count == 0
+
+
+def test_resolve_stream_fatal_plugin_error_is_offline(monkeypatch) -> None:
+  from streamlink.exceptions import FatalPluginError
+
+  class _OfflinePlugin(_FakePlugin):
+    def streams(self, *a, **k):
+      raise FatalPluginError("Room is offline")
+
+  session = _FakeSession(_FakePluginClass(_OfflinePlugin({}, {})))
+  _patch_parse(monkeypatch)
+
+  with pytest.raises(ss.StreamOfflineError):
+    ss.resolve_stream(session, "https://twitch.tv/x", "best", [])
 
 
 def test_stream_pump_output_closed_is_not_error() -> None:

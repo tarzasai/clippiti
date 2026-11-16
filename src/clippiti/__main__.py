@@ -28,6 +28,7 @@ from .model.config import resolve_config_path
 from .model.config import resolve_workdir
 from .model.config import save_config
 from .services.slsession import create_session
+from .services.slsession import open_stream
 from .services.slsession import resolve_stream
 from .services.mpvargs import build_mpv_options
 from .services.clipper import ClipConfig
@@ -257,6 +258,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     # Update the window title/icon now; buffer startup below adds several seconds.
     report_metadata(metadata)
+
+    def reopen():
+      again = resolve_stream(
+        session=session,
+        url=args.url,
+        quality=args.quality,
+        tokens=streamlink_tokens,
+      )
+      return open_stream(again.stream)
+
     return start_single_session_pipeline(
       workdir=workdir,
       ffmpeg_path=ffmpeg_path,
@@ -268,6 +279,7 @@ def main(argv: list[str] | None = None) -> int:
       metadata=metadata,
       cancel_event=startup_cancel,
       report=report_status,
+      reopen=reopen,
     )
 
   def handle_startup_status(window: MainWindow, message: str) -> None:

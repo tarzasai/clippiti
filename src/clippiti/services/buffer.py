@@ -13,7 +13,7 @@ import time
 import ctypes
 
 from .slsession import StreamMetadata, StreamPump, open_stream
-from streamlink.stream.stream import Stream
+from streamlink.stream.stream import Stream, StreamIO
 
 
 log = logging.getLogger("clippiti")
@@ -96,6 +96,7 @@ def start_single_session_pipeline(
   startup_timeout_s: int = 25,
   cancel_event: threading.Event | None = None,
   report: Callable[[str], None] | None = None,
+  reopen: Callable[[], tuple[StreamIO, bytes]] | None = None,
 ) -> SessionRuntime:
   segment_seconds = max(1, int(segment_seconds))
   window_segments = max(2, int(window_segments))
@@ -165,7 +166,7 @@ def start_single_session_pipeline(
       raise RuntimeError("failed to open ffmpeg stdin")
     log.debug("buffer_engine: ffmpeg process started pid=%s", ffmpeg_proc.pid)
 
-    stream_pump = StreamPump(stream_fd, ffmpeg_proc.stdin, prebuffer=prebuffer)
+    stream_pump = StreamPump(stream_fd, ffmpeg_proc.stdin, prebuffer=prebuffer, reopen=reopen)
     stream_pump.start()
     log.debug("buffer_engine: stream pump started")
   except Exception:

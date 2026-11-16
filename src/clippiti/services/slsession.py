@@ -10,13 +10,15 @@ This module owns:
 - a background pump that reads stream bytes and writes them to ffmpeg's stdin.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
 import errno
 import logging
 import threading
+import time
 
 from streamlink import Streamlink
-from streamlink.exceptions import NoPluginError, PluginError, StreamError
+from streamlink.exceptions import FatalPluginError, NoPluginError, PluginError, StreamError
 from streamlink.stream.stream import Stream, StreamIO
 from streamlink.user_input import UserInputRequester
 from streamlink_cli.argparser import (
@@ -31,6 +33,10 @@ log = logging.getLogger("clippiti")
 
 # errno values that mean "the reader (ffmpeg) went away", not a real stream error.
 _ACCEPTABLE_ERRNO = (errno.EPIPE, errno.EINVAL, errno.ECONNRESET)
+
+
+class StreamOfflineError(RuntimeError):
+  """The plugin reports the stream as unavailable, as opposed to a transient failure."""
 
 
 @dataclass
@@ -177,11 +183,13 @@ def resolve_stream(
 
   try:
     streams = plugin.streams()
+  except FatalPluginError as exc:
+    raise StreamOfflineError(str(exc)) from exc
   except PluginError as exc:
     raise RuntimeError(str(exc)) from exc
 
   if not streams:
-    raise RuntimeError(f"no playable streams found on this URL: {url}")
+    raise StreamOfflineError(f"no playable streams found on this URL: {url}")
 
   # Streamlink accepts a comma-separated priority list, e.g. "720p,best": each
   # candidate is tried in order and the first available one is used.
@@ -245,6 +253,10 @@ def open_stream(stream: Stream, prebuffer_size: int = 8192) -> tuple[StreamIO, b
 class StreamPump:
   """Reads bytes from a Streamlink stream and writes them to ffmpeg's stdin.
 
+  When the stream ends and a ``reopen`` callable is given, the pump resolves
+  and opens the stream again, feeding the same ffmpeg process, until the plugin
+  reports the stream offline or ``reconnect_window_s`` elapses.
+
   Exposes a :meth:`poll`/:attr:`returncode` interface compatible with the
   pipeline health check so callers can treat it like a subprocess handle.
   """
@@ -255,39 +267,35 @@ class StreamPump:
     ffmpeg_stdin,
     prebuffer: bytes = b"",
     chunk_size: int = 8192,
+    reopen: Callable[[], tuple[StreamIO, bytes]] | None = None,
+    reconnect_window_s: float = 90.0,
+    reconnect_max_delay_s: float = 10.0,
   ) -> None:
     self._fd = stream_fd
     self._stdin = ffmpeg_stdin
     self._prebuffer = prebuffer
     self._chunk_size = chunk_size
+    self._reopen = reopen
+    self._reconnect_window_s = reconnect_window_s
+    self._reconnect_max_delay_s = reconnect_max_delay_s
+    self._reconnect_deadline = 0.0
     self._stop = threading.Event()
     self._thread = threading.Thread(target=self._run, name="clippiti-stream-pump", daemon=True)
     self._close_lock = threading.Lock()
-    self._close_thread: threading.Thread | None = None
+    self._close_threads: dict[int, threading.Thread] = {}
     self.error: str | None = None
     self.returncode: int | None = None
+    self.reconnecting = False
+    self.reconnect_count = 0
 
   def start(self) -> None:
     self._thread.start()
 
   def _run(self) -> None:
-    read = self._fd.read
-    write = self._stdin.write
     try:
-      if self._prebuffer:
-        write(self._prebuffer)
-        self._prebuffer = b""
-      while not self._stop.is_set():
-        data = read(self._chunk_size)
-        if data == b"":
+      while self._pump_current() and self._reopen is not None and not self._stop.is_set():
+        if not self._reconnect():
           break
-        write(data)
-    except OSError as exc:
-      if getattr(exc, "errno", None) in _ACCEPTABLE_ERRNO:
-        log.debug("stream pump: output closed (%s)", exc)
-      else:
-        self.error = str(exc)
-        log.debug("stream pump: read/write error: %s", exc, exc_info=True)
     except Exception as exc:  # pragma: no cover - defensive
       self.error = str(exc)
       log.debug("stream pump: unexpected error: %s", exc, exc_info=True)
@@ -297,27 +305,100 @@ class StreamPump:
         self._stdin.close()
       except Exception:
         pass
-      self._close_fd_async()
+      self._close_async(self._fd)
 
-  def _close_fd_async(self) -> threading.Thread:
+  def _pump_current(self) -> bool:
+    """Pump the current stream until it ends. Returns False if the output side is gone."""
+    fd = self._fd
+    write = self._stdin.write
+    try:
+      if self._prebuffer:
+        write(self._prebuffer)
+        self._prebuffer = b""
+      while not self._stop.is_set():
+        try:
+          data = fd.read(self._chunk_size)
+        except Exception as exc:
+          if self._stop.is_set():
+            return True
+          self.error = str(exc) or type(exc).__name__
+          log.debug("stream pump: read error: %s", exc, exc_info=True)
+          return True
+        if data == b"":
+          log.debug("stream pump: stream ended")
+          return True
+        write(data)
+    except OSError as exc:
+      if getattr(exc, "errno", None) in _ACCEPTABLE_ERRNO:
+        log.debug("stream pump: output closed (%s)", exc)
+      else:
+        self.error = str(exc)
+        log.debug("stream pump: write error: %s", exc, exc_info=True)
+      return False
+    return True
+
+  def _reconnect(self) -> bool:
+    """Resolve and open the stream again. Returns True once a new stream is in place."""
+    assert self._reopen is not None
+    self.reconnecting = True
+    self._close_async(self._fd)
+    now = time.monotonic()
+    # A stream that keeps dropping right after reconnecting shares one window instead of looping forever.
+    if now >= self._reconnect_deadline:
+      self._reconnect_deadline = now + self._reconnect_window_s
+    log.info("stream pump: stream ended (%s); reconnecting", self.error or "EOF")
+    delay = 1.0
+    attempt = 0
+    try:
+      while not self._stop.is_set():
+        attempt += 1
+        try:
+          new_fd, prebuffer = self._reopen()
+        except StreamOfflineError as exc:
+          log.info("stream pump: stream is offline: %s", exc)
+          self.error = None
+          return False
+        except Exception as exc:
+          log.info("stream pump: reconnect attempt %d failed: %s", attempt, exc)
+          if time.monotonic() + delay >= self._reconnect_deadline:
+            log.warning("stream pump: giving up reconnecting after %d attempt(s)", attempt)
+            self.error = f"reconnect failed: {exc}"
+            return False
+          self._stop.wait(delay)
+          delay = min(delay * 2, self._reconnect_max_delay_s)
+          continue
+
+        with self._close_lock:
+          stopped = self._stop.is_set()
+          if not stopped:
+            self._fd = new_fd
+        if stopped:
+          self._close_async(new_fd)
+          return False
+
+        self._prebuffer = prebuffer
+        self.error = None
+        self.reconnect_count += 1
+        log.info("stream pump: reconnected after %d attempt(s)", attempt)
+        return True
+      return False
+    finally:
+      self.reconnecting = False
+
+  def _close_async(self, fd: StreamIO) -> threading.Thread:
     # Closing a Streamlink stream may block until the plugin gives up reconnecting.
     with self._close_lock:
-      if self._close_thread is None:
-        self._close_thread = threading.Thread(target=self._close_fd, name="clippiti-stream-close", daemon=True)
-        self._close_thread.start()
-      return self._close_thread
-
-  def _close_fd(self) -> None:
-    try:
-      self._fd.close()
-    except Exception:
-      log.debug("stream pump: stream close failed", exc_info=True)
+      thread = self._close_threads.get(id(fd))
+      if thread is None:
+        thread = threading.Thread(target=_close_quietly, args=(fd,), name="clippiti-stream-close", daemon=True)
+        self._close_threads[id(fd)] = thread
+        thread.start()
+      return thread
 
   @property
   def close_pending(self) -> bool:
-    """True while the underlying Streamlink stream is still closing."""
-    thread = self._close_thread
-    return thread is not None and thread.is_alive()
+    """True while any Streamlink stream opened by this pump is still closing."""
+    return any(thread.is_alive() for thread in list(self._close_threads.values()))
 
   def poll(self) -> int | None:
     """Return ``None`` while pumping, or an exit-like code once finished."""
@@ -328,9 +409,19 @@ class StreamPump:
 
   def stop(self, timeout: float = 3.0) -> None:
     self._stop.set()
+    with self._close_lock:
+      fd = self._fd
     # Closing the stream fd unblocks a pending read().
-    self._close_fd_async().join(timeout=timeout)
+    self._close_async(fd).join(timeout=timeout)
     if self.close_pending:
       log.debug("stream pump: stream close still pending after %.1fs", timeout)
     if self._thread.is_alive():
       self._thread.join(timeout=timeout)
+
+
+def _close_quietly(fd: StreamIO) -> None:
+  try:
+    fd.close()
+  except Exception:
+    log.debug("stream pump: stream close failed", exc_info=True)
+
