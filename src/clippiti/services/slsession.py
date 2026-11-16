@@ -262,6 +262,8 @@ class StreamPump:
     self._chunk_size = chunk_size
     self._stop = threading.Event()
     self._thread = threading.Thread(target=self._run, name="clippiti-stream-pump", daemon=True)
+    self._close_lock = threading.Lock()
+    self._close_thread: threading.Thread | None = None
     self.error: str | None = None
     self.returncode: int | None = None
 
@@ -295,10 +297,27 @@ class StreamPump:
         self._stdin.close()
       except Exception:
         pass
-      try:
-        self._fd.close()
-      except Exception:
-        pass
+      self._close_fd_async()
+
+  def _close_fd_async(self) -> threading.Thread:
+    # Closing a Streamlink stream may block until the plugin gives up reconnecting.
+    with self._close_lock:
+      if self._close_thread is None:
+        self._close_thread = threading.Thread(target=self._close_fd, name="clippiti-stream-close", daemon=True)
+        self._close_thread.start()
+      return self._close_thread
+
+  def _close_fd(self) -> None:
+    try:
+      self._fd.close()
+    except Exception:
+      log.debug("stream pump: stream close failed", exc_info=True)
+
+  @property
+  def close_pending(self) -> bool:
+    """True while the underlying Streamlink stream is still closing."""
+    thread = self._close_thread
+    return thread is not None and thread.is_alive()
 
   def poll(self) -> int | None:
     """Return ``None`` while pumping, or an exit-like code once finished."""
@@ -310,9 +329,8 @@ class StreamPump:
   def stop(self, timeout: float = 3.0) -> None:
     self._stop.set()
     # Closing the stream fd unblocks a pending read().
-    try:
-      self._fd.close()
-    except Exception:
-      pass
+    self._close_fd_async().join(timeout=timeout)
+    if self.close_pending:
+      log.debug("stream pump: stream close still pending after %.1fs", timeout)
     if self._thread.is_alive():
       self._thread.join(timeout=timeout)

@@ -196,6 +196,7 @@ def main(argv: list[str] | None = None) -> int:
   install_excepthook()
   reset_child_signal_disposition()
   runtime: SessionRuntime | None = None
+  exit_code: int | None = None
   diagnostics_logged = False
 
   log.info("clippiti version %s", dist_ver)
@@ -339,7 +340,8 @@ def main(argv: list[str] | None = None) -> int:
       result = run_app(**_run_kwargs)
     if runtime is None and result.startup_result is not None:
       runtime = result.startup_result
-    return result.exit_code
+    exit_code = result.exit_code
+    return exit_code
   finally:
     startup_cancel.set()
     if runtime is not None:
@@ -349,6 +351,12 @@ def main(argv: list[str] | None = None) -> int:
       log.debug("cleanup buffer begin (%s)", runtime.segment_dir)
       cleanup_runtime_artifacts(runtime)
       log.info("cleanup buffer complete exists=%s", runtime.segment_dir.exists())
+      pump = runtime.stream_pump
+      if exit_code is not None and pump is not None and pump.close_pending:
+        # Streamlink's muxer close runs in a ThreadPoolExecutor that interpreter exit would join.
+        log.warning("stream close still pending; forcing process exit")
+        logging.shutdown()
+        os._exit(exit_code)
 
 
 if __name__ == "__main__":

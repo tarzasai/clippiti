@@ -1,3 +1,6 @@
+import threading
+import time
+
 import pytest
 
 import clippiti.services.slsession as ss
@@ -219,11 +222,38 @@ def test_stream_pump_pumps_bytes_and_closes() -> None:
   pump = StreamPump(fd, stdin, prebuffer=b"pre")
   pump.start()
   pump._thread.join(timeout=2.0)
+  pump.stop()
 
   assert bytes(stdin.data) == b"preonetwo"
   assert pump.poll() == 0
   assert pump.error is None
   assert stdin.closed is True
+  assert fd.closed is True
+  assert pump.close_pending is False
+
+
+def test_stream_pump_stop_does_not_block_on_slow_close() -> None:
+  release = threading.Event()
+
+  class _BlockingCloseFd(_FakeFd):
+    def close(self):
+      release.wait(timeout=5.0)
+      super().close()
+
+  fd = _BlockingCloseFd([b"one"])
+  pump = StreamPump(fd, _FakeStdin())
+  pump.start()
+  pump._thread.join(timeout=2.0)
+
+  started = time.monotonic()
+  pump.stop(timeout=0.2)
+  assert time.monotonic() - started < 1.0
+  assert pump.close_pending is True
+  assert pump.poll() == 0
+
+  release.set()
+  pump._close_thread.join(timeout=2.0)
+  assert pump.close_pending is False
   assert fd.closed is True
 
 
