@@ -10,6 +10,11 @@ def test_build_mpv_options_accepts_key_value_and_yaml() -> None:
   assert options2["vf"] == "hflip"
 
 
+def test_build_mpv_options_allows_mute() -> None:
+  assert build_mpv_options({}, "vf=hflip, mute=yes")["mute"] == "yes"
+  assert build_mpv_options({}, "mute: yes")["mute"] is True
+
+
 def test_build_mpv_options_normalizes_dashed_keys() -> None:
   options = build_mpv_options({}, "--video-sync=display-resample, --vf=hflip")
 

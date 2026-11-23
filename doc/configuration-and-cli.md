@@ -8,7 +8,7 @@
 
 Options:
 
-- `--mpv`: additional mpv options (YAML mapping or key=value pairs)
+- `--mpv`: additional mpv options (YAML mapping or key=value pairs); `mute=yes` starts playback muted (toggle it later as usual)
 - `--config`: explicit config file path
 - `--workdir`: explicit runtime workdir path
 - `--verbose`: debug logging
