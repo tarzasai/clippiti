@@ -38,7 +38,9 @@ class VideoSurface(QOpenGLWidget):
     self._mpv_options = dict(mpv_options)
     self._shutting_down = False
     self._volume = self.DEFAULT_VOLUME
-    self._muted = False
+    # mpv's mute option only sets the initial state; the toggle owns it afterwards.
+    mute = self._mpv_options.pop("mute", False)
+    self._muted = mute is True or str(mute).strip().lower() in ("yes", "true", "1", "on")
     self._rotation = 0
     self._screenshot_futures: set = set()
 

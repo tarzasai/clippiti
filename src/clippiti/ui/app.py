@@ -142,6 +142,7 @@ class MainWindow(QMainWindow):
 
     self._clip_workflow: ClipWorkflow | None = None
     self._offline_close_pending = False
+    self._reconnect_osd_shown = False
 
     self.osd = OsdOverlay(self.video)
     if not media_source:
@@ -240,6 +241,7 @@ class MainWindow(QMainWindow):
     streamlink_terminated = self._is_terminated(streamlink_pump)
     ffmpeg_terminated = self._is_terminated(ffmpeg_proc)
     if not (streamlink_terminated or ffmpeg_terminated):
+      self._update_reconnect_osd(bool(getattr(streamlink_pump, "reconnecting", False)))
       return
 
     self._offline_close_pending = True
@@ -252,6 +254,15 @@ class MainWindow(QMainWindow):
     )
     self.osd.show_message("Stream offline", "Pipeline terminated; closing...", persistent=True)
     QTimer.singleShot(900, self.close)
+
+  def _update_reconnect_osd(self, reconnecting: bool) -> None:
+    if reconnecting == self._reconnect_osd_shown:
+      return
+    self._reconnect_osd_shown = reconnecting
+    if reconnecting:
+      self.osd.show_message("Reconnecting\u2026", "Stream interrupted", persistent=True)
+    else:
+      self.osd.show_message("Reconnected")
 
   @staticmethod
   def _is_terminated(proc: object | None) -> bool:

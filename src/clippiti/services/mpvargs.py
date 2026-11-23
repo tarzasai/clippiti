@@ -23,6 +23,7 @@ ALLOWLISTED_MPV_OPTIONS = {
   "sub_delay",
   "audio_delay",
   "vd_lavc_threads",
+  "mute",
 }
 
 FORCED_MPV_OPTIONS = {

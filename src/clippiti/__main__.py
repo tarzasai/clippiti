@@ -28,6 +28,7 @@ from .model.config import resolve_config_path
 from .model.config import resolve_workdir
 from .model.config import save_config
 from .services.slsession import create_session
+from .services.slsession import open_stream
 from .services.slsession import resolve_stream
 from .services.mpvargs import build_mpv_options
 from .services.clipper import ClipConfig
@@ -196,6 +197,7 @@ def main(argv: list[str] | None = None) -> int:
   install_excepthook()
   reset_child_signal_disposition()
   runtime: SessionRuntime | None = None
+  exit_code: int | None = None
   diagnostics_logged = False
 
   log.info("clippiti version %s", dist_ver)
@@ -256,6 +258,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     # Update the window title/icon now; buffer startup below adds several seconds.
     report_metadata(metadata)
+
+    def reopen():
+      again = resolve_stream(
+        session=session,
+        url=args.url,
+        quality=args.quality,
+        tokens=streamlink_tokens,
+      )
+      return open_stream(again.stream)
+
     return start_single_session_pipeline(
       workdir=workdir,
       ffmpeg_path=ffmpeg_path,
@@ -267,6 +279,7 @@ def main(argv: list[str] | None = None) -> int:
       metadata=metadata,
       cancel_event=startup_cancel,
       report=report_status,
+      reopen=reopen,
     )
 
   def handle_startup_status(window: MainWindow, message: str) -> None:
@@ -339,7 +352,8 @@ def main(argv: list[str] | None = None) -> int:
       result = run_app(**_run_kwargs)
     if runtime is None and result.startup_result is not None:
       runtime = result.startup_result
-    return result.exit_code
+    exit_code = result.exit_code
+    return exit_code
   finally:
     startup_cancel.set()
     if runtime is not None:
@@ -349,6 +363,12 @@ def main(argv: list[str] | None = None) -> int:
       log.debug("cleanup buffer begin (%s)", runtime.segment_dir)
       cleanup_runtime_artifacts(runtime)
       log.info("cleanup buffer complete exists=%s", runtime.segment_dir.exists())
+      pump = runtime.stream_pump
+      if exit_code is not None and pump is not None and pump.close_pending:
+        # Streamlink's muxer close runs in a ThreadPoolExecutor that interpreter exit would join.
+        log.warning("stream close still pending; forcing process exit")
+        logging.shutdown()
+        os._exit(exit_code)
 
 
 if __name__ == "__main__":
