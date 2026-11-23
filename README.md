@@ -136,7 +136,7 @@ clippiti https://www.twitch.tv/example_channel best --mpv "vf=hflip" -- --retry-
 
 If you want a tray app that monitors your favorite livestreams and opens them directly in your player, check out my [**Lurkiti**](https://github.com/tarzasai/Lurkiti).
 
-Lurkiti is a lightweight desktop companion for stream monitoring and quick one-click launch into Clippiti or any other Streamlink supported media player.
+Lurkiti is a desktop companion for stream monitoring and quick one-click launch into Clippiti or any other Streamlink supported media player.
 
 ## Configuration
 
