@@ -27,7 +27,7 @@ from ..model.config import normalize_config
 
 # Determine version: prefer installed distribution metadata, fallback to package __version__
 try:
-  dist_ver = version('clippiti')
+  dist_ver = version('clippiti-player')
 except PackageNotFoundError:
   import clippiti
   dist_ver = getattr(clippiti, '__version__', 'dev')

@@ -80,3 +80,11 @@ def test_main_uses_presenting_wake_lock(monkeypatch, tmp_path) -> None:
     ("enter", "presenting"),
     ("exit", "presenting"),
   ]
+
+
+def test_version_option_prints_version_without_positionals(capsys):
+  import pytest
+  with pytest.raises(SystemExit) as exc:
+    main_mod.build_parser().parse_args(["-V"])
+  assert exc.value.code == 0
+  assert capsys.readouterr().out.strip() == f"clippiti {main_mod.dist_ver}"

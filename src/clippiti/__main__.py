@@ -40,7 +40,7 @@ from wakepy import keep as _wakepy_keep
 
 # Determine version: prefer installed distribution metadata, fallback to package __version__
 try:
-  dist_ver = version('clippiti')
+  dist_ver = version('clippiti-player')
 except PackageNotFoundError:
   import clippiti
   dist_ver = getattr(clippiti, '__version__', 'dev')
@@ -122,6 +122,11 @@ def build_parser() -> argparse.ArgumentParser:
   parser.add_argument(
     "quality",
     help="Desired stream quality; accepts a comma-separated fallback list, e.g. '720p,best'",
+  )
+  parser.add_argument(
+    "-V", "--version",
+    action="version",
+    version=f"%(prog)s {dist_ver}",
   )
   parser.add_argument(
     "--config",
